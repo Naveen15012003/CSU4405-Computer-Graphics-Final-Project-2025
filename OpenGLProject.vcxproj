@@ -70,7 +70,8 @@
       <AdditionalDependencies>glfw3.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /Y /D "$(ProjectDir)shaders\*.*" "$(OutDir)shaders\"</Command>
+      <Command>if not exist "$(OutDir)shaders\" mkdir "$(OutDir)shaders"
+xcopy /Y /D "$(ProjectDir)shaders\*.*" "$(OutDir)shaders\"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -94,7 +95,8 @@
       <AdditionalDependencies>glfw3.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /Y /D "$(ProjectDir)shaders\*.*" "$(OutDir)shaders\"</Command>
+      <Command>if not exist "$(OutDir)shaders\" mkdir "$(OutDir)shaders"
+xcopy /Y /D "$(ProjectDir)shaders\*.*" "$(OutDir)shaders\"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
