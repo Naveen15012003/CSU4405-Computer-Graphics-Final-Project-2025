@@ -14,9 +14,10 @@ public:
     // Model data
     std::vector<Mesh> meshes;
     std::string directory;
+    bool usingFallbackTexture;
 
     // Constructor
-    Model(const std::string& path);
+    Model(const std::string& path, const std::string& fallbackTexturePath = "");
 
     // Draw the model
     void Draw(unsigned int shaderProgram);
@@ -27,6 +28,9 @@ public:
 private:
     // Texture cache to avoid loading duplicates
     std::map<std::string, Texture> texturesLoaded;
+    Texture fallbackTexture;
+    bool hasFallbackTexture;
+    std::string fallbackTexturePath;
 
     // Load model with Assimp
     void loadModel(const std::string& path);
@@ -39,4 +43,10 @@ private:
 
     // Load material textures
     std::vector<Texture> loadMaterialTextures(aiMaterial* mat, aiTextureType type, std::string typeName);
+    
+    // Load fallback texture
+    bool loadFallbackTexture(const std::string& path);
+    
+    // Apply fallback texture to mesh if needed
+    void applyFallbackTextureIfNeeded(std::vector<Texture>& textures);
 };

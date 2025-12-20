@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <filesystem>
 
 // Phase 2 includes
 #include "Camera.h"
@@ -62,8 +63,20 @@ int main()
         return -1;
     }
 
-    std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << std::endl;
-    std::cout << "GLFW Version: " << glfwGetVersionString() << std::endl;
+    std::cout << "\n?????????????????????????????????????????????????" << std::endl;
+    std::cout << "?  OpenGL Version: " << glGetString(GL_VERSION) << std::endl;
+    std::cout << "?  GLFW Version: " << glfwGetVersionString() << std::endl;
+    std::cout << "?????????????????????????????????????????????????" << std::endl;
+    
+    std::cout << "\n=== STARTUP DIAGNOSTICS ===" << std::endl;
+    std::cout << "Current working directory: " << std::filesystem::current_path().string() << std::endl;
+    std::cout << "\nDirectory existence checks:" << std::endl;
+    std::cout << "  assets/          : " << (std::filesystem::exists("assets") ? "? EXISTS" : "? NOT FOUND") << std::endl;
+    std::cout << "  assets/skybox/   : " << (std::filesystem::exists("assets/skybox") ? "? EXISTS" : "? NOT FOUND") << std::endl;
+    std::cout << "  assets/models/   : " << (std::filesystem::exists("assets/models") ? "? EXISTS" : "? NOT FOUND") << std::endl;
+    std::cout << "  assets/textures/ : " << (std::filesystem::exists("assets/textures") ? "? EXISTS" : "? NOT FOUND") << std::endl;
+    std::cout << "===========================\n" << std::endl;
+    
     std::cout << "=== Phase 2: Model Loading + Textures + Skybox ===" << std::endl;
 
     // Enable depth testing
@@ -112,15 +125,15 @@ int main()
     glBindVertexArray(0);
 
     // Phase 2: Setup camera
-    Camera camera(glm::vec3(3.0f, 3.0f, 5.0f));  // Position camera at an angle to see 3D shape better
+    Camera camera(glm::vec3(0.0f, 0.0f, 5.0f));
 
-    // Phase 2: Load model
+    // Phase 2: Load model with fallback texture
     std::cout << "\nLoading model..." << std::endl;
     Model* model = nullptr;
     try
     {
-        // Try to load a model - will create a simple test model if file doesn't exist
-        model = new Model("assets/models/cube.obj");
+        // Load model with fallback texture path
+        model = new Model("assets/models/cube.obj", "assets/textures/default.png");
     }
     catch (const std::exception& e)
     {
@@ -128,22 +141,14 @@ int main()
         std::cerr << "Continuing without 3D model..." << std::endl;
     }
 
-    // Phase 2: Load skybox
+    // Phase 2: Load skybox with auto-detection
     std::cout << "\nLoading skybox..." << std::endl;
     Skybox skybox;
-    std::string skyboxFaces[6] = {
-        "right.jpg",
-        "left.jpg",
-        "top.jpg",
-        "bottom.jpg",
-        "front.jpg",
-        "back.jpg"
-    };
+    bool skyboxLoaded = Texture::LoadSkyboxAuto("assets/skybox", skybox.cubemapTexture);
     
-    bool skyboxLoaded = skybox.Load("assets/skybox", skyboxFaces);
     if (!skyboxLoaded)
     {
-        std::cerr << "Failed to load skybox - continuing without it" << std::endl;
+        std::cerr << "Failed to load skybox with auto-detection" << std::endl;
     }
 
     // Initialize FPS timer
@@ -193,8 +198,8 @@ int main()
             // Model matrix - rotate over time for demonstration
             glm::mat4 modelMatrix = glm::mat4(1.0f);
             modelMatrix = glm::translate(modelMatrix, glm::vec3(0.0f, 0.0f, 0.0f));
-            modelMatrix = glm::rotate(modelMatrix, (float)glfwGetTime() * glm::radians(30.0f), glm::vec3(0.5f, 1.0f, 0.0f));  // Rotate on multiple axes
-            modelMatrix = glm::scale(modelMatrix, glm::vec3(0.5f));  // Scale down to 50% for better view
+            modelMatrix = glm::rotate(modelMatrix, (float)glfwGetTime() * glm::radians(20.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            modelMatrix = glm::scale(modelMatrix, glm::vec3(1.0f));
 
             glUniformMatrix4fv(glGetUniformLocation(modelShader, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
 

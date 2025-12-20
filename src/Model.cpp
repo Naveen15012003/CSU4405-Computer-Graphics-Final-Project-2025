@@ -1,9 +1,43 @@
 #include "Model.h"
 #include <iostream>
 
-Model::Model(const std::string& path)
+Model::Model(const std::string& path, const std::string& fallbackTexturePath)
+    : usingFallbackTexture(false), hasFallbackTexture(false), fallbackTexturePath(fallbackTexturePath)
 {
+    // Try to load fallback texture if path provided
+    if (!fallbackTexturePath.empty())
+    {
+        hasFallbackTexture = loadFallbackTexture(fallbackTexturePath);
+    }
+    
     loadModel(path);
+}
+
+bool Model::loadFallbackTexture(const std::string& path)
+{
+    std::cout << "\n[Fallback Texture] Attempting to load: " << path << std::endl;
+    
+    if (fallbackTexture.LoadFromFile(path, true))
+    {
+        fallbackTexture.Type = "diffuse";
+        std::cout << "  ? Fallback texture loaded successfully" << std::endl;
+        return true;
+    }
+    else
+    {
+        std::cerr << "  ? Failed to load fallback texture" << std::endl;
+        return false;
+    }
+}
+
+void Model::applyFallbackTextureIfNeeded(std::vector<Texture>& textures)
+{
+    if (textures.empty() && hasFallbackTexture)
+    {
+        std::cout << "  ? Applying fallback texture (no material textures found)" << std::endl;
+        textures.push_back(fallbackTexture);
+        usingFallbackTexture = true;
+    }
 }
 
 void Model::Draw(unsigned int shaderProgram)
@@ -36,13 +70,38 @@ void Model::loadModel(const std::string& path)
     if (directory == path)  // No '/' found, try backslash
         directory = path.substr(0, path.find_last_of('\\'));
 
-    std::cout << "Model loading: " << path << std::endl;
+    std::cout << "\n=== MODEL LOADING ===" << std::endl;
+    std::cout << "Model path: " << path << std::endl;
     std::cout << "  Meshes: " << scene->mNumMeshes << std::endl;
     std::cout << "  Materials: " << scene->mNumMaterials << std::endl;
 
     processNode(scene->mRootNode, scene);
 
-    std::cout << "Model loaded successfully: " << meshes.size() << " meshes" << std::endl;
+    // Count total textures loaded
+    int totalTextures = 0;
+    for (const auto& mesh : meshes)
+    {
+        totalTextures += mesh.textures.size();
+    }
+    
+    std::cout << "Model loaded successfully:" << std::endl;
+    std::cout << "  " << meshes.size() << " meshes" << std::endl;
+    std::cout << "  " << totalTextures << " textures total" << std::endl;
+    
+    if (usingFallbackTexture)
+    {
+        std::cout << "  ? FALLBACK TEXTURE APPLIED (no material textures found)" << std::endl;
+    }
+    else if (totalTextures > 0)
+    {
+        std::cout << "  ? USING MATERIAL TEXTURES" << std::endl;
+    }
+    else
+    {
+        std::cout << "  ? NO TEXTURES (will use shader fallback)" << std::endl;
+    }
+    
+    std::cout << "=====================\n" << std::endl;
 }
 
 void Model::processNode(aiNode* node, const aiScene* scene)
@@ -66,6 +125,12 @@ Mesh Model::processMesh(aiMesh* mesh, const aiScene* scene)
     std::vector<Vertex> vertices;
     std::vector<unsigned int> indices;
     std::vector<Texture> textures;
+
+    std::cout << "\nProcessing mesh: " << (mesh->mName.length > 0 ? mesh->mName.C_Str() : "unnamed") << std::endl;
+    std::cout << "  Vertices: " << mesh->mNumVertices << std::endl;
+    std::cout << "  Faces: " << mesh->mNumFaces << std::endl;
+    std::cout << "  Has normals: " << (mesh->HasNormals() ? "yes" : "no") << std::endl;
+    std::cout << "  Has UVs: " << (mesh->mTextureCoords[0] != nullptr ? "yes" : "NO - will use (0,0)") << std::endl;
 
     // Process vertices
     for (unsigned int i = 0; i < mesh->mNumVertices; i++)
@@ -120,10 +185,70 @@ Mesh Model::processMesh(aiMesh* mesh, const aiScene* scene)
     if (mesh->mMaterialIndex >= 0)
     {
         aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
+        
+        std::cout << "  Material index: " << mesh->mMaterialIndex << std::endl;
+        
+        // Print all available texture types in this material
+        std::cout << "  Material texture counts:" << std::endl;
+        std::cout << "    DIFFUSE: " << material->GetTextureCount(aiTextureType_DIFFUSE) << std::endl;
+        std::cout << "    SPECULAR: " << material->GetTextureCount(aiTextureType_SPECULAR) << std::endl;
+        std::cout << "    AMBIENT: " << material->GetTextureCount(aiTextureType_AMBIENT) << std::endl;
+        std::cout << "    EMISSIVE: " << material->GetTextureCount(aiTextureType_EMISSIVE) << std::endl;
+        std::cout << "    HEIGHT: " << material->GetTextureCount(aiTextureType_HEIGHT) << std::endl;
+        std::cout << "    NORMALS: " << material->GetTextureCount(aiTextureType_NORMALS) << std::endl;
+        std::cout << "    SHININESS: " << material->GetTextureCount(aiTextureType_SHININESS) << std::endl;
+        std::cout << "    OPACITY: " << material->GetTextureCount(aiTextureType_OPACITY) << std::endl;
+        std::cout << "    DISPLACEMENT: " << material->GetTextureCount(aiTextureType_DISPLACEMENT) << std::endl;
+        std::cout << "    LIGHTMAP: " << material->GetTextureCount(aiTextureType_LIGHTMAP) << std::endl;
+        std::cout << "    REFLECTION: " << material->GetTextureCount(aiTextureType_REFLECTION) << std::endl;
+        std::cout << "    BASE_COLOR: " << material->GetTextureCount(aiTextureType_BASE_COLOR) << std::endl;
 
-        // Diffuse maps
+        // Try diffuse maps
         std::vector<Texture> diffuseMaps = loadMaterialTextures(material, aiTextureType_DIFFUSE, "diffuse");
         textures.insert(textures.end(), diffuseMaps.begin(), diffuseMaps.end());
+        
+        // Try base color maps (for PBR materials)
+        std::vector<Texture> baseColorMaps = loadMaterialTextures(material, aiTextureType_BASE_COLOR, "diffuse");
+        textures.insert(textures.end(), baseColorMaps.begin(), baseColorMaps.end());
+        
+        // If still no textures, try ambient as fallback
+        if (textures.empty())
+        {
+            std::cout << "  No DIFFUSE or BASE_COLOR found, trying AMBIENT as fallback..." << std::endl;
+            std::vector<Texture> ambientMaps = loadMaterialTextures(material, aiTextureType_AMBIENT, "diffuse");
+            textures.insert(textures.end(), ambientMaps.begin(), ambientMaps.end());
+        }
+        
+        std::cout << "  Total material textures loaded: " << textures.size() << std::endl;
+        
+        // Apply fallback texture if no material textures found
+        applyFallbackTextureIfNeeded(textures);
+        
+        if (textures.empty())
+        {
+            std::cout << "  ? WARNING: No textures available for this mesh (no material textures, no fallback)" << std::endl;
+            std::cout << "  Model will render with shader fallback color (normal-based shading)" << std::endl;
+        }
+        else if (usingFallbackTexture)
+        {
+            std::cout << "  ? Using FALLBACK TEXTURE for this mesh" << std::endl;
+        }
+        else
+        {
+            std::cout << "  ? Using MATERIAL TEXTURES for this mesh" << std::endl;
+        }
+    }
+    else
+    {
+        std::cout << "  No material assigned to this mesh" << std::endl;
+        
+        // Apply fallback texture for meshes without materials
+        applyFallbackTextureIfNeeded(textures);
+        
+        if (!textures.empty() && usingFallbackTexture)
+        {
+            std::cout << "  ? Applied FALLBACK TEXTURE (no material)" << std::endl;
+        }
     }
 
     return Mesh(vertices, indices, textures);
@@ -132,16 +257,25 @@ Mesh Model::processMesh(aiMesh* mesh, const aiScene* scene)
 std::vector<Texture> Model::loadMaterialTextures(aiMaterial* mat, aiTextureType type, std::string typeName)
 {
     std::vector<Texture> textures;
+    unsigned int textureCount = mat->GetTextureCount(type);
+    
+    if (textureCount > 0)
+    {
+        std::cout << "    Found " << textureCount << " " << typeName << " texture(s)" << std::endl;
+    }
 
-    for (unsigned int i = 0; i < mat->GetTextureCount(type); i++)
+    for (unsigned int i = 0; i < textureCount; i++)
     {
         aiString str;
         mat->GetTexture(type, i, &str);
         std::string texturePath = std::string(str.C_Str());
 
+        std::cout << "    Texture path from material: " << texturePath << std::endl;
+
         // Check if texture was loaded before
         if (texturesLoaded.find(texturePath) != texturesLoaded.end())
         {
+            std::cout << "      Using cached texture" << std::endl;
             textures.push_back(texturesLoaded[texturePath]);
             continue;
         }
@@ -150,21 +284,36 @@ std::vector<Texture> Model::loadMaterialTextures(aiMaterial* mat, aiTextureType 
         Texture texture;
         std::string fullPath = directory + "/" + texturePath;
 
-        // Try with backslash as well
-        if (!texture.LoadFromFile(fullPath, true))
+        std::cout << "      Attempting to load from: " << fullPath << std::endl;
+        
+        // Try with forward slash
+        if (texture.LoadFromFile(fullPath, true))
+        {
+            texture.Type = typeName;
+            texture.Path = texturePath;
+            textures.push_back(texture);
+            texturesLoaded[texturePath] = texture;
+            std::cout << "      ? Texture loaded successfully" << std::endl;
+        }
+        // Try with backslash
+        else
         {
             fullPath = directory + "\\" + texturePath;
-            if (!texture.LoadFromFile(fullPath, true))
+            std::cout << "      Trying alternate path: " << fullPath << std::endl;
+            
+            if (texture.LoadFromFile(fullPath, true))
             {
-                std::cerr << "Failed to load texture: " << texturePath << std::endl;
-                continue;
+                texture.Type = typeName;
+                texture.Path = texturePath;
+                textures.push_back(texture);
+                texturesLoaded[texturePath] = texture;
+                std::cout << "      ? Texture loaded successfully" << std::endl;
+            }
+            else
+            {
+                std::cerr << "      ? Failed to load texture: " << texturePath << std::endl;
             }
         }
-
-        texture.Type = typeName;
-        texture.Path = texturePath;
-        textures.push_back(texture);
-        texturesLoaded[texturePath] = texture;
     }
 
     return textures;

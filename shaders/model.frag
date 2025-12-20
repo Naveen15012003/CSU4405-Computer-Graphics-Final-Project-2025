@@ -14,16 +14,30 @@ uniform Material material;
 
 void main()
 {
-    // Simple textured output (no lighting in Phase 2)
+    // Sample the texture
     vec4 texColor = texture(material.diffuse1, TexCoords);
     
-    // If no texture or texture is black, use a default color
-    if (texColor.rgb == vec3(0.0))
+    // Simple lighting calculation for fallback
+    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
+    vec3 norm = normalize(Normal);
+    float diff = max(dot(norm, lightDir), 0.0);
+    
+    // Ambient + diffuse lighting
+    float ambient = 0.4;
+    float lighting = ambient + (0.6 * diff);
+    
+    // Check if texture is valid
+    // A fully black texture with alpha 0 or very low likely means no texture bound
+    if (texColor.a < 0.01 || (texColor.r + texColor.g + texColor.b < 0.01))
     {
-        FragColor = vec4(0.8, 0.8, 0.8, 1.0);  // Default gray
+        // No valid texture - use fallback with simple lighting
+        vec3 baseColor = vec3(0.6, 0.7, 0.8);  // Light blue-gray
+        FragColor = vec4(baseColor * lighting, 1.0);
     }
     else
     {
-        FragColor = texColor;
+        // Valid texture exists - apply simple lighting to it
+        vec3 texturedColor = texColor.rgb * lighting;
+        FragColor = vec4(texturedColor, texColor.a);
     }
 }

@@ -70,8 +70,27 @@
       <AdditionalDependencies>glfw3.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>if not exist "$(OutDir)shaders\" mkdir "$(OutDir)shaders"
-xcopy /Y /D "$(ProjectDir)shaders\*.*" "$(OutDir)shaders\"</Command>
+      <Command>echo === Post-Build: Copying Resources ===
+if not exist "$(OutDir)shaders\" mkdir "$(OutDir)shaders"
+xcopy /Y /D "$(ProjectDir)shaders\*.*" "$(OutDir)shaders\"
+echo.
+echo === Post-Build: Copying Assimp DLLs ===
+if exist "$(ProjectDir)external\assimp\bin\assimp-vc143-mtd.dll" (
+  xcopy /Y /D "$(ProjectDir)external\assimp\bin\*.dll" "$(OutDir)"
+  echo   Copied from external\assimp\bin\
+) else if exist "$(ProjectDir)external\assimp\bin\x64\assimp-vc143-mtd.dll" (
+  xcopy /Y /D "$(ProjectDir)external\assimp\bin\x64\*.dll" "$(OutDir)"
+  echo   Copied from external\assimp\bin\x64\
+) else if exist "$(VCPKG_ROOT)\installed\x64-windows\bin\assimp-vc143-mtd.dll" (
+  xcopy /Y /D "$(VCPKG_ROOT)\installed\x64-windows\bin\assimp*.dll" "$(OutDir)"
+  xcopy /Y /D "$(VCPKG_ROOT)\installed\x64-windows\bin\pugixml*.dll" "$(OutDir)"
+  echo   Copied from vcpkg
+) else (
+  echo   WARNING: Assimp DLLs not found!
+  echo   Download from: https://github.com/assimp/assimp/releases
+  echo   Place in: $(ProjectDir)external\assimp\bin\
+)
+echo === Post-Build Complete ===</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -95,8 +114,27 @@ xcopy /Y /D "$(ProjectDir)shaders\*.*" "$(OutDir)shaders\"</Command>
       <AdditionalDependencies>glfw3.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>if not exist "$(OutDir)shaders\" mkdir "$(OutDir)shaders"
-xcopy /Y /D "$(ProjectDir)shaders\*.*" "$(OutDir)shaders\"</Command>
+      <Command>echo === Post-Build: Copying Resources ===
+if not exist "$(OutDir)shaders\" mkdir "$(OutDir)shaders"
+xcopy /Y /D "$(ProjectDir)shaders\*.*" "$(OutDir)shaders\"
+echo.
+echo === Post-Build: Copying Assimp DLLs ===
+if exist "$(ProjectDir)external\assimp\bin\assimp-vc143-mt.dll" (
+  xcopy /Y /D "$(ProjectDir)external\assimp\bin\*.dll" "$(OutDir)"
+  echo   Copied from external\assimp\bin\
+) else if exist "$(ProjectDir)external\assimp\bin\x64\assimp-vc143-mt.dll" (
+  xcopy /Y /D "$(ProjectDir)external\assimp\bin\x64\*.dll" "$(OutDir)"
+  echo   Copied from external\assimp\bin\x64\
+) else if exist "$(VCPKG_ROOT)\installed\x64-windows\bin\assimp-vc143-mt.dll" (
+  xcopy /Y /D "$(VCPKG_ROOT)\installed\x64-windows\bin\assimp*.dll" "$(OutDir)"
+  xcopy /Y /D "$(VCPKG_ROOT)\installed\x64-windows\bin\pugixml*.dll" "$(OutDir)"
+  echo   Copied from vcpkg
+) else (
+  echo   WARNING: Assimp DLLs not found!
+  echo   Download from: https://github.com/assimp/assimp/releases
+  echo   Place in: $(ProjectDir)external\assimp\bin\
+)
+echo === Post-Build Complete ===</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -130,3 +168,6 @@ xcopy /Y /D "$(ProjectDir)shaders\*.*" "$(OutDir)shaders\"</Command>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
+
+
+
