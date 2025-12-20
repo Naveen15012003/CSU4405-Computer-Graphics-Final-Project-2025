@@ -359,7 +359,7 @@ void updateFPS(GLFWwindow* window)
     // Update title every second
     if (currentTime - lastTime >= 1.0)
     {
-        std::string title = "OpenGL Project - Phase 2 - FPS: " + std::to_string(frameCount);
+        std::string title = "OpenGL Project - Phase 3 - FPS: " + std::to_string(frameCount);
         glfwSetWindowTitle(window, title.c_str());
 
         frameCount = 0;
