@@ -145,6 +145,7 @@ echo === Post-Build Complete ===</Command>
     <ClCompile Include="src\Model.cpp" />
     <ClCompile Include="src\Skybox.cpp" />
     <ClCompile Include="src\ShadowMap.cpp" />
+    <ClCompile Include="src\HUD.cpp" />
     <ClCompile Include="external\glad\src\glad.c" />
   </ItemGroup>
   <ItemGroup>
@@ -157,6 +158,7 @@ echo === Post-Build Complete ===</Command>
     <ClInclude Include="include\Model.h" />
     <ClInclude Include="include\Skybox.h" />
     <ClInclude Include="include\ShadowMap.h" />
+    <ClInclude Include="include\HUD.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\vertex.glsl" />
@@ -174,6 +176,30 @@ echo === Post-Build Complete ===</Command>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
