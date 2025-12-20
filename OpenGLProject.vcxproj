@@ -69,36 +69,26 @@
       <AdditionalLibraryDirectories>$(ProjectDir)external\glfw\lib-vc2022;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>glfw3.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
-    <PreBuildEvent>
-      <Command>REM === Pre-Build: Ensure DLLs are present ===
-if exist "C:\vcpkg\installed\x64-windows\debug\bin\assimp-vc143-mtd.dll" (
-  if not exist "$(OutDir)" mkdir "$(OutDir)"
-  xcopy /Y /Q "C:\vcpkg\installed\x64-windows\debug\bin\*.dll" "$(OutDir)" 2&gt;nul
-  echo Pre-build: Assimp DLLs copied
-)</Command>
-    </PreBuildEvent>
     <PostBuildEvent>
       <Command>echo === Post-Build: Copying Resources ===
 if not exist "$(OutDir)shaders\" mkdir "$(OutDir)shaders"
 xcopy /Y /D "$(ProjectDir)shaders\*.*" "$(OutDir)shaders\"
 echo.
-echo === Post-Build: Copying Assets ===
-if not exist "$(OutDir)assets\" mkdir "$(OutDir)assets"
-xcopy /Y /D /E /I "$(ProjectDir)assets\*.*" "$(OutDir)assets\"
-echo   ✓ Copied assets folder
-echo.
-echo === Post-Build: Ensuring Assimp DLLs ===
-if exist "C:\vcpkg\installed\x64-windows\debug\bin\assimp-vc143-mtd.dll" (
-  xcopy /Y "C:\vcpkg\installed\x64-windows\debug\bin\*.dll" "$(OutDir)"
-  echo   ✓ Copied Assimp DLLs from vcpkg debug
-) else if exist "$(ProjectDir)external\assimp\bin\assimp-vc143-mtd.dll" (
-  xcopy /Y "$(ProjectDir)external\assimp\bin\*.dll" "$(OutDir)"
-  echo   ✓ Copied from external\assimp\bin\
+echo === Post-Build: Copying Assimp DLLs ===
+if exist "$(ProjectDir)external\assimp\bin\assimp-vc143-mtd.dll" (
+  xcopy /Y /D "$(ProjectDir)external\assimp\bin\*.dll" "$(OutDir)"
+  echo   Copied from external\assimp\bin\
 ) else if exist "$(ProjectDir)external\assimp\bin\x64\assimp-vc143-mtd.dll" (
-  xcopy /Y "$(ProjectDir)external\assimp\bin\x64\*.dll" "$(OutDir)"
-  echo   ✓ Copied from external\assimp\bin\x64\
+  xcopy /Y /D "$(ProjectDir)external\assimp\bin\x64\*.dll" "$(OutDir)"
+  echo   Copied from external\assimp\bin\x64\
+) else if exist "$(VCPKG_ROOT)\installed\x64-windows\bin\assimp-vc143-mtd.dll" (
+  xcopy /Y /D "$(VCPKG_ROOT)\installed\x64-windows\bin\assimp*.dll" "$(OutDir)"
+  xcopy /Y /D "$(VCPKG_ROOT)\installed\x64-windows\bin\pugixml*.dll" "$(OutDir)"
+  echo   Copied from vcpkg
 ) else (
-  echo   ⚠ WARNING: Assimp DLLs not found!
+  echo   WARNING: Assimp DLLs not found!
+  echo   Download from: https://github.com/assimp/assimp/releases
+  echo   Place in: $(ProjectDir)external\assimp\bin\
 )
 echo === Post-Build Complete ===</Command>
     </PostBuildEvent>
@@ -123,36 +113,24 @@ echo === Post-Build Complete ===</Command>
       <AdditionalLibraryDirectories>$(ProjectDir)external\glfw\lib-vc2022;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>glfw3.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
-    <PreBuildEvent>
-      <Command>REM === Pre-Build: Ensure DLLs are present ===
-if exist "C:\vcpkg\installed\x64-windows\bin\assimp-vc143-mt.dll" (
-  if not exist "$(OutDir)" mkdir "$(OutDir)"
-  xcopy /Y /Q "C:\vcpkg\installed\x64-windows\bin\*.dll" "$(OutDir)" 2&gt;nul
-  echo Pre-build: Assimp DLLs copied
-)</Command>
-    </PreBuildEvent>
     <PostBuildEvent>
       <Command>echo === Post-Build: Copying Resources ===
 if not exist "$(OutDir)shaders\" mkdir "$(OutDir)shaders"
 xcopy /Y /D "$(ProjectDir)shaders\*.*" "$(OutDir)shaders\"
 echo.
-echo === Post-Build: Copying Assets ===
-if not exist "$(OutDir)assets\" mkdir "$(OutDir)assets"
-xcopy /Y /D /E /I "$(ProjectDir)assets\*.*" "$(OutDir)assets\"
-echo   ✓ Copied assets folder
-echo.
-echo === Post-Build: Ensuring Assimp DLLs ===
-if exist "C:\vcpkg\installed\x64-windows\bin\assimp-vc143-mt.dll" (
-  xcopy /Y "C:\vcpkg\installed\x64-windows\bin\*.dll" "$(OutDir)"
-  echo   ✓ Copied Assimp DLLs from vcpkg
-) else if exist "$(ProjectDir)external\assimp\bin\assimp-vc143-mt.dll" (
-  xcopy /Y "$(ProjectDir)external\assimp\bin\*.dll" "$(OutDir)"
-  echo   ✓ Copied from external\assimp\bin\
+echo === Post-Build: Copying Assimp DLLs ===
+if exist "$(ProjectDir)external\assimp\bin\assimp-vc143-mt.dll" (
+  xcopy /Y /D "$(ProjectDir)external\assimp\bin\*.dll" "$(OutDir)"
+  echo   Copied from external\assimp\bin\
 ) else if exist "$(ProjectDir)external\assimp\bin\x64\assimp-vc143-mt.dll" (
-  xcopy /Y "$(ProjectDir)external\assimp\bin\x64\*.dll" "$(OutDir)"
-  echo   ✓ Copied from external\assimp\bin\x64\
+  xcopy /Y /D "$(ProjectDir)external\assimp\bin\x64\*.dll" "$(OutDir)"
+  echo   Copied from external\assimp\bin\x64\
+) else if exist "$(VCPKG_ROOT)\installed\x64-windows\bin\assimp-vc143-mt.dll" (
+  xcopy /Y /D "$(VCPKG_ROOT)\installed\x64-windows\bin\assimp*.dll" "$(OutDir)"
+  xcopy /Y /D "$(VCPKG_ROOT)\installed\x64-windows\bin\pugixml*.dll" "$(OutDir)"
+  echo   Copied from vcpkg
 ) else (
-  echo   ⚠ WARNING: Assimp DLLs not found!
+  echo   WARNING: Assimp DLLs not found!
   echo   Download from: https://github.com/assimp/assimp/releases
   echo   Place in: $(ProjectDir)external\assimp\bin\
 )
@@ -160,7 +138,7 @@ echo === Post-Build Complete ===</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="src\main_phase2.cpp" />
+    <ClCompile Include="src\main_phase3.cpp" />
     <ClCompile Include="src\Camera.cpp" />
     <ClCompile Include="src\Texture.cpp" />
     <ClCompile Include="src\Mesh.cpp" />
@@ -196,6 +174,10 @@ echo === Post-Build Complete ===</Command>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
+
+
+
+
 
 
 
