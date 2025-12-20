@@ -32,7 +32,7 @@ uniform bool enableShadows;
 uniform bool uUsePCF;
 uniform bool enableGammaCorrection;
 
-// Shadow calculation with EXTREME PCF difference - IMPOSSIBLE TO MISS
+// Shadow calculation with HIGHLY VISIBLE PCF difference
 float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
 {
     // Perform perspective divide
@@ -48,25 +48,23 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
     // Get depth from light's perspective
     float currentDepth = projCoords.z;
     
-    // Adaptive bias
+    // Adaptive bias to prevent shadow acne
     float bias = max(0.008 * (1.0 - dot(normal, lightDir)), 0.002);
     
     float shadow = 0.0;
     
     if (uUsePCF)
     {
-        // EXTREME PCF - 13x13 kernel with MASSIVE radius
-        // This will create EXTREMELY soft, blurry shadows
+        // PCF: 7x7 kernel = 49 samples (visible soft shadows, realistic)
         vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
-        int sampleRadius = 6; // 13x13 = 169 samples!
-        float radiusMultiplier = 5.0; // HUGE blur radius
+        int sampleRadius = 3; // 7x7 kernel
+        float radiusMultiplier = 2.0; // Moderate blur radius
         int sampleCount = 0;
         
         for(int x = -sampleRadius; x <= sampleRadius; ++x)
         {
             for(int y = -sampleRadius; y <= sampleRadius; ++y)
             {
-                // Sample with MASSIVE radius for ultra-soft shadows
                 vec2 offset = vec2(x, y) * texelSize * radiusMultiplier;
                 float pcfDepth = texture(shadowMap, projCoords.xy + offset).r;
                 shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
@@ -75,21 +73,15 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
         }
         shadow /= float(sampleCount);
         
-        // VERY aggressive smoothstep for maximum softness
-        shadow = smoothstep(0.1, 0.9, shadow);
-        
-        // Add slight darkening to soft shadows for more contrast
-        shadow *= 0.95;
+        // Smoothstep for gradual shadow edges
+        shadow = smoothstep(0.2, 0.8, shadow);
     }
     else
     {
-        // ULTRA-HARD shadows - single sample with ZERO blur
+        // Hard shadows - single sample, sharp edges
         float closestDepth = texture(shadowMap, projCoords.xy).r;
-        float hardBias = bias * 0.3; // Sharp bias
+        float hardBias = bias * 0.5;
         shadow = currentDepth - hardBias > closestDepth ? 1.0 : 0.0;
-        
-        // Make hard shadows DARKER for maximum contrast
-        shadow = shadow > 0.5 ? 1.0 : 0.0; // Binary shadow
     }
     
     return shadow;

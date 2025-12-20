@@ -52,13 +52,13 @@ std::string Texture::ResolvePath(const std::string& relativePath, const std::vec
         
         if (fs::exists(fullPath))
         {
-            std::cout << "  [ResolvePath] ? Resolved: " << fullPath.string() << std::endl;
+            std::cout << "  [ResolvePath] [OK] Resolved: " << fullPath.string() << std::endl;
             return fullPath.string();
         }
     }
     
     // If not found, print what we tried
-    std::cerr << "  [ResolvePath] ? Path not found. Tried:" << std::endl;
+    std::cerr << "  [ResolvePath] [WARN] Path not found. Tried:" << std::endl;
     for (const auto& searchPath : searchPaths)
     {
         fs::path fullPath = fs::path(searchPath) / relativePath;
@@ -137,12 +137,12 @@ bool Texture::LoadFromFile(const std::string& path, bool flipVertically)
         glGenerateMipmap(GL_TEXTURE_2D);
 
         stbi_image_free(data);
-        std::cout << "  [Texture] ? Loaded: " << Path << " (" << width << "x" << height << ", " << nrChannels << " channels)" << std::endl;
+        std::cout << "  [Texture] [OK] Loaded: " << Path << " (" << width << "x" << height << ", " << nrChannels << " channels)" << std::endl;
         return true;
     }
     else
     {
-        std::cerr << "  [Texture] ? Failed to load: " << path << std::endl;
+        std::cerr << "  [Texture] [ERROR] Failed to load: " << path << std::endl;
         std::cerr << "    STB Error: " << stbi_failure_reason() << std::endl;
         if (data) stbi_image_free(data);
         return false;
@@ -208,11 +208,11 @@ bool Texture::LoadCubemap(const std::string faces[6])
             glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
                          0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
             stbi_image_free(data);
-            std::cout << "  ? Face loaded: " << faceNames[i] << " (" << width << "x" << height << ", " << nrChannels << " channels)" << std::endl;
+            std::cout << "  [OK] Face loaded: " << faceNames[i] << " (" << width << "x" << height << ", " << nrChannels << " channels)" << std::endl;
         }
         else
         {
-            std::cerr << "  ? FAILED to load face: " << faceNames[i] << std::endl;
+            std::cerr << "  [ERROR] FAILED to load face: " << faceNames[i] << std::endl;
             std::cerr << "    Tried: " << basePath << ".jpg/.png/.jpeg" << std::endl;
             if (data) stbi_image_free(data);
             allLoaded = false;
@@ -226,7 +226,7 @@ bool Texture::LoadCubemap(const std::string faces[6])
         glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-        std::cout << "\n??? SKYBOX LOADED SUCCESSFULLY ???\n" << std::endl;
+        std::cout << "\n[OK] SKYBOX LOADED SUCCESSFULLY\n" << std::endl;
         return true;
     }
     else

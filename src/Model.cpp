@@ -20,12 +20,12 @@ bool Model::loadFallbackTexture(const std::string& path)
     if (fallbackTexture.LoadFromFile(path, true))
     {
         fallbackTexture.Type = "diffuse";
-        std::cout << "  ? Fallback texture loaded successfully" << std::endl;
+        std::cout << "  [OK] Fallback texture loaded successfully" << std::endl;
         return true;
     }
     else
     {
-        std::cerr << "  ? Failed to load fallback texture" << std::endl;
+        std::cerr << "  [ERROR] Failed to load fallback texture" << std::endl;
         return false;
     }
 }
@@ -34,7 +34,7 @@ void Model::applyFallbackTextureIfNeeded(std::vector<Texture>& textures)
 {
     if (textures.empty() && hasFallbackTexture)
     {
-        std::cout << "  ? Applying fallback texture (no material textures found)" << std::endl;
+        std::cout << "  [INFO] Applying fallback texture (no material textures found)" << std::endl;
         textures.push_back(fallbackTexture);
         usingFallbackTexture = true;
     }
@@ -90,15 +90,15 @@ void Model::loadModel(const std::string& path)
     
     if (usingFallbackTexture)
     {
-        std::cout << "  ? FALLBACK TEXTURE APPLIED (no material textures found)" << std::endl;
+        std::cout << "  [INFO] FALLBACK TEXTURE APPLIED (no material textures found)" << std::endl;
     }
     else if (totalTextures > 0)
     {
-        std::cout << "  ? USING MATERIAL TEXTURES" << std::endl;
+        std::cout << "  [OK] USING MATERIAL TEXTURES" << std::endl;
     }
     else
     {
-        std::cout << "  ? NO TEXTURES (will use shader fallback)" << std::endl;
+        std::cout << "  [WARN] NO TEXTURES (will use shader fallback)" << std::endl;
     }
     
     std::cout << "=====================\n" << std::endl;
@@ -226,16 +226,16 @@ Mesh Model::processMesh(aiMesh* mesh, const aiScene* scene)
         
         if (textures.empty())
         {
-            std::cout << "  ? WARNING: No textures available for this mesh (no material textures, no fallback)" << std::endl;
+            std::cout << "  [WARN] No textures available for this mesh (no material textures, no fallback)" << std::endl;
             std::cout << "  Model will render with shader fallback color (normal-based shading)" << std::endl;
         }
         else if (usingFallbackTexture)
         {
-            std::cout << "  ? Using FALLBACK TEXTURE for this mesh" << std::endl;
+            std::cout << "  [INFO] Using FALLBACK TEXTURE for this mesh" << std::endl;
         }
         else
         {
-            std::cout << "  ? Using MATERIAL TEXTURES for this mesh" << std::endl;
+            std::cout << "  [OK] Using MATERIAL TEXTURES for this mesh" << std::endl;
         }
     }
     else
@@ -247,7 +247,7 @@ Mesh Model::processMesh(aiMesh* mesh, const aiScene* scene)
         
         if (!textures.empty() && usingFallbackTexture)
         {
-            std::cout << "  ? Applied FALLBACK TEXTURE (no material)" << std::endl;
+            std::cout << "  [INFO] Applied FALLBACK TEXTURE (no material)" << std::endl;
         }
     }
 
@@ -293,7 +293,7 @@ std::vector<Texture> Model::loadMaterialTextures(aiMaterial* mat, aiTextureType 
             texture.Path = texturePath;
             textures.push_back(texture);
             texturesLoaded[texturePath] = texture;
-            std::cout << "      ? Texture loaded successfully" << std::endl;
+            std::cout << "      [OK] Texture loaded successfully" << std::endl;
         }
         // Try with backslash
         else
@@ -307,11 +307,11 @@ std::vector<Texture> Model::loadMaterialTextures(aiMaterial* mat, aiTextureType 
                 texture.Path = texturePath;
                 textures.push_back(texture);
                 texturesLoaded[texturePath] = texture;
-                std::cout << "      ? Texture loaded successfully" << std::endl;
+                std::cout << "      [OK] Texture loaded successfully" << std::endl;
             }
             else
             {
-                std::cerr << "      ? Failed to load texture: " << texturePath << std::endl;
+                std::cerr << "      [ERROR] Failed to load texture: " << texturePath << std::endl;
             }
         }
     }

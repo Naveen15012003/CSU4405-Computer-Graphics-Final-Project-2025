@@ -138,7 +138,7 @@ echo === Post-Build Complete ===</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="src\main_phase3.cpp" />
+    <ClCompile Include="src\main_phase4.cpp" />
     <ClCompile Include="src\Camera.cpp" />
     <ClCompile Include="src\Texture.cpp" />
     <ClCompile Include="src\Mesh.cpp" />
@@ -176,6 +176,38 @@ echo === Post-Build Complete ===</Command>
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
