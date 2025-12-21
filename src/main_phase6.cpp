@@ -1,8 +1,9 @@
-﻿#include <glad/glad.h>
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <stb_image.h>
 
 #include <iostream>
 #include <fstream>
@@ -10,17 +11,19 @@
 #include <string>
 #include <filesystem>
 
-// Phase 2 + 3 + 4 + 5 includes
+// Phase 2 + 3 + 4 + 5 + 6 includes
 #include "Camera.h"
 #include "Model.h"
 #include "Skybox.h"
 #include "ShadowMap.h"
 #include "HUD.h"
 #include "PostProcessor.h"
+#include "City.h"
+#include "SkyboxAtlas.h"
 
 // Window dimensions
-const unsigned int SCR_WIDTH = 800;
-const unsigned int SCR_HEIGHT = 600;
+const unsigned int SCR_WIDTH = 1920;  // Increased from 800 to 1920 (Full HD width)
+const unsigned int SCR_HEIGHT = 1080; // Increased from 600 to 1080 (Full HD height)
 
 // Shadow map resolution
 const unsigned int SHADOW_WIDTH = 2048;
@@ -53,6 +56,12 @@ float bloomThreshold = 1.0f;
 const float THRESHOLD_STEP = 0.1f;
 int debugViewMode = 0; // 0=normal, 1=HDR only, 2=bright pass, 3=bloom blur
 
+// Phase 6 additions
+bool enableCity = true;
+bool useSkyboxAtlas = false; // DEFAULT TO CUBEMAP for final demo (most robust)
+bool cPressed = false;
+bool kPressed = false;
+
 // Key press tracking
 bool f1Pressed = false;
 bool f2Pressed = false;
@@ -80,10 +89,18 @@ glm::vec3 lightDirection = glm::normalize(glm::vec3(-0.5f, -1.0f, -0.3f));
 float lightAzimuth = 0.0f;
 float lightElevation = -45.0f;
 
+// Mouse control variables
+float lastX = SCR_WIDTH / 2.0f;
+float lastY = SCR_HEIGHT / 2.0f;
+bool firstMouse = true;
+Camera* g_camera = nullptr; // Global camera pointer for callbacks
+
 // Function prototypes
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
+void mouse_callback(GLFWwindow* window, double xpos, double ypos);
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
 void processInput(GLFWwindow* window, Camera& camera, float deltaTime);
-void processDebugKeys(GLFWwindow* window);
+void processDebugKeys(GLFWwindow* window, SkyboxAtlas* skyboxAtlas);
 void processLightControls(GLFWwindow* window);
 std::string loadShaderFromFile(const char* filePath);
 unsigned int compileShader(unsigned int type, const char* source);
@@ -96,6 +113,7 @@ void updateLightDirection();
 // Ground plane VAO
 unsigned int groundPlaneVAO = 0;
 unsigned int groundPlaneVBO = 0;
+unsigned int groundPlaneTexture = 0; // Dedicated ground texture
 
 int main()
 {
@@ -121,6 +139,8 @@ int main()
     }
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+    glfwSetCursorPosCallback(window, mouse_callback);
+    glfwSetScrollCallback(window, scroll_callback);
 
     // Load OpenGL function pointers with GLAD
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
@@ -130,9 +150,10 @@ int main()
     }
 
     std::cout << "\n====================================================" << std::endl;
-    std::cout << "|  PHASE 5 - HDR POST-PROCESSING                   |" << std::endl;
-    std::cout << "|  (Tone Mapping + Bloom + Exposure + Controls)   |" << std::endl;
+    std::cout << "|  PHASE 6 - LAB2 INTEGRATION + PROCEDURAL CITY   |" << std::endl;
+    std::cout << "|  (Textured Buildings + Atlas Skybox)            |" << std::endl;
     std::cout << "====================================================" << std::endl;
+
     std::cout << "\nOpenGL Version: " << glGetString(GL_VERSION) << std::endl;
     std::cout << "GLFW Version: " << glfwGetVersionString() << std::endl;
     
@@ -152,6 +173,9 @@ int main()
     std::cout << "  T/G  - Bloom threshold" << std::endl;
     std::cout << "  V    - Cycle debug views" << std::endl;
     std::cout << "  F4   - Toggle Gamma" << std::endl;
+    std::cout << "\n  PHASE 6 (LAB2):" << std::endl;
+    std::cout << "  C    - Toggle City ON/OFF" << std::endl;
+    std::cout << "  K    - Toggle Skybox (Cubemap/Atlas)" << std::endl;
     std::cout << "\n  SHADOWS:" << std::endl;
     std::cout << "  F1 - Toggle shadows" << std::endl;
     std::cout << "  F2 - Toggle PCF (soft shadows)" << std::endl;
@@ -192,6 +216,34 @@ int main()
     // Phase 5: Initialize Post-Processor
     PostProcessor postProcessor(SCR_WIDTH, SCR_HEIGHT);
     postProcessor.Initialize();
+
+    // Phase 6: Initialize City and SkyboxAtlas
+    std::cout << "Loading Phase 6 components..." << std::endl;
+    
+    unsigned int buildingShader = createShaderProgram("shaders/building.vert", "shaders/building.frag");
+    unsigned int skyboxAtlasShader = createShaderProgram("shaders/skybox_atlas.vert", "shaders/skybox_atlas.frag");
+    
+    if (buildingShader == 0 || skyboxAtlasShader == 0)
+    {
+        std::cerr << "Failed to create Phase 6 shader programs" << std::endl;
+        glfwTerminate();
+        return -1;
+    }
+    
+    City city;
+    city.Initialize(buildingShader);
+    std::cout << "[OK] City system initialized\n" << std::endl;
+    
+    SkyboxAtlas* skyboxAtlas = new SkyboxAtlas();
+    bool atlasAvailable = skyboxAtlas->LoadFromAtlas("assets/skybox/skybox_atlas.jpg");
+    
+    if (!atlasAvailable || !skyboxAtlas->IsInitialized())
+    {
+        std::cout << "[WARN] Skybox atlas not available - defaulting to CUBEMAP mode" << std::endl;
+        useSkyboxAtlas = false; // Force cubemap mode if atlas missing
+    }
+    
+    std::cout << "[OK] Skybox atlas system initialized (Available: " << (atlasAvailable ? "YES" : "NO - using fallback") << ")\n" << std::endl;
 
     // Create shadow map
     ShadowMap shadowMap(SHADOW_WIDTH, SHADOW_HEIGHT);
@@ -241,6 +293,7 @@ int main()
 
     // Camera setup
     Camera camera(glm::vec3(0.0f, 5.0f, 15.0f));  // Zoomed out even more: Y=5, Z=15 (was Y=4, Z=12)
+    g_camera = &camera; // Set global pointer for mouse callbacks
 
     // Phase 4: Enable mouse capture by default
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -280,7 +333,7 @@ int main()
 
         // Input
         processInput(window, camera, deltaTime);
-        processDebugKeys(window);
+        processDebugKeys(window, skyboxAtlas);
         processLightControls(window);
 
         // Update FPS
@@ -297,10 +350,11 @@ int main()
         
         // Light space matrix (orthographic for directional light)
         // Use the global lightDirection variable
-        float near_plane = 0.5f, far_plane = 10.0f;
-        glm::mat4 lightProjection = glm::ortho(-5.0f, 5.0f, -5.0f, 5.0f, near_plane, far_plane);
+        // EXPANDED: Larger frustum to cover city buildings
+        float near_plane = 0.5f, far_plane = 50.0f;  // Increased from 10.0f to 50.0f
+        glm::mat4 lightProjection = glm::ortho(-50.0f, 50.0f, -50.0f, 50.0f, near_plane, far_plane);  // Expanded from -5/-5 to -50/-50
         glm::mat4 lightView = glm::lookAt(
-            -lightDirection * 5.0f,
+            -lightDirection * 25.0f,  // Increased from 5.0f to 25.0f
             glm::vec3(0.0f, 0.0f, 0.0f),
             glm::vec3(0.0f, 1.0f, 0.0f)
         );
@@ -341,6 +395,14 @@ int main()
         glUniformMatrix4fv(glGetUniformLocation(shadowShader, "model"), 1, GL_FALSE, glm::value_ptr(cube3Model));
         model->Draw(shadowShader);
 
+        // Phase 6: Render city buildings in shadow pass
+        if (enableCity)
+        {
+            // CRITICAL: Buildings must cast shadows
+            // Use dedicated shadow rendering method for efficiency
+            city.RenderShadow(lightSpaceMatrix, shadowShader);
+        }
+
         shadowMap.Unbind();
         glCullFace(GL_BACK);
 
@@ -379,9 +441,21 @@ int main()
             glm::mat4 projection = camera.GetProjectionMatrix((float)SCR_WIDTH / (float)SCR_HEIGHT);
             glm::mat4 view = camera.GetViewMatrix();
 
-            // Render skybox first
-            if (skybox)
+            // Render skybox first (choose mode)
+            if (useSkyboxAtlas && skyboxAtlas->IsInitialized())
             {
+                // Lab2-style atlas skybox
+                glDepthFunc(GL_LEQUAL);
+                glUseProgram(skyboxAtlasShader);
+                glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
+                glUniformMatrix4fv(glGetUniformLocation(skyboxAtlasShader, "view"), 1, GL_FALSE, glm::value_ptr(skyboxView));
+                glUniformMatrix4fv(glGetUniformLocation(skyboxAtlasShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+                skyboxAtlas->Draw(skyboxAtlasShader);
+                glDepthFunc(GL_LESS);
+            }
+            else if (skybox)
+            {
+                // Original cubemap skybox
                 glDepthFunc(GL_LEQUAL);
                 glUseProgram(skyboxShader);
                 glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
@@ -440,6 +514,39 @@ int main()
             
             glUniformMatrix4fv(glGetUniformLocation(modelShader, "model"), 1, GL_FALSE, glm::value_ptr(cube3Model));
             model->Draw(modelShader);
+            
+            // Phase 6: Render city
+            if (enableCity)
+            {
+                glUseProgram(buildingShader);
+                
+                // Set matrices for buildings
+                glUniformMatrix4fv(glGetUniformLocation(buildingShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+                glUniformMatrix4fv(glGetUniformLocation(buildingShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
+                glUniformMatrix4fv(glGetUniformLocation(buildingShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
+                
+                // Set lights
+                glUniform3fv(glGetUniformLocation(buildingShader, "dirLightDir"), 1, glm::value_ptr(lightDirection));
+                glUniform3fv(glGetUniformLocation(buildingShader, "dirLightColor"), 1, glm::value_ptr(dirLightColor));
+                glUniform3fv(glGetUniformLocation(buildingShader, "pointLightPos"), 1, glm::value_ptr(pointLightPos));
+                glUniform3fv(glGetUniformLocation(buildingShader, "pointLightColor"), 1, glm::value_ptr(pointLightColor));
+                glUniform1f(glGetUniformLocation(buildingShader, "pointLightConstant"), 1.0f);
+                glUniform1f(glGetUniformLocation(buildingShader, "pointLightLinear"), 0.09f);
+                glUniform1f(glGetUniformLocation(buildingShader, "pointLightQuadratic"), 0.032f);
+                
+                // Set camera and shadow
+                glUniform3fv(glGetUniformLocation(buildingShader, "viewPos"), 1, glm::value_ptr(camera.Position));
+                shadowMap.BindForReading(GL_TEXTURE1);
+                glUniform1i(glGetUniformLocation(buildingShader, "shadowMap"), 1);
+                
+                // Set toggles
+                glUniform1i(glGetUniformLocation(buildingShader, "enableShadows"), enableShadows);
+                glUniform1i(glGetUniformLocation(buildingShader, "uUsePCF"), enablePCF);
+                glUniform1f(glGetUniformLocation(buildingShader, "bloomThreshold"), bloomThreshold);
+                
+                // Render city
+                city.Render(view, projection, lightSpaceMatrix, camera.Position);
+            }
         }
 
         // Phase 5: End post-processing render and apply effects (if it was started)
@@ -485,6 +592,22 @@ int main()
         hud.RenderText(std::string("View: ") + debugModes[debugViewMode] + " (V)", 10.0f, hudY, hudScale, hudColor);
         hudY -= 18.0f;
         
+        // Phase 6: City and Skybox mode
+        hud.RenderText("City: " + std::string(enableCity ? "ON" : "OFF") + " (C)", 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        
+        std::string skyboxModeText = "Skybox: ";
+        if (useSkyboxAtlas && skyboxAtlas->IsInitialized()) {
+            skyboxModeText += "Atlas";
+        } else if (!useSkyboxAtlas) {
+            skyboxModeText += "Cubemap";
+        } else {
+            skyboxModeText += "Cubemap (Atlas N/A)";
+        }
+        skyboxModeText += " (K)";
+        hud.RenderText(skyboxModeText, 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        
         hud.RenderText("Shadows: " + std::string(enableShadows ? "ON" : "OFF") + " (F1)", 10.0f, hudY, hudScale, hudColor);
         hudY -= 18.0f;
         hud.RenderText("PCF: " + std::string(enablePCF ? "ON" : "OFF") + " (F2)", 10.0f, hudY, hudScale, hudColor);
@@ -517,7 +640,9 @@ int main()
     // Cleanup
     delete model;
     if (skybox) delete skybox;
+    if (skyboxAtlas) delete skyboxAtlas;
     
+    city.Cleanup();
     hud.Cleanup();
     postProcessor.Cleanup();
     
@@ -526,11 +651,18 @@ int main()
         glDeleteVertexArrays(1, &groundPlaneVAO);
         glDeleteBuffers(1, &groundPlaneVBO);
     }
+    
+    if (groundPlaneTexture != 0)
+    {
+        glDeleteTextures(1, &groundPlaneTexture);
+    }
 
     glDeleteProgram(modelShader);
     glDeleteProgram(skyboxShader);
     glDeleteProgram(shadowShader);
     glDeleteProgram(debugDepthShader);
+    glDeleteProgram(buildingShader);
+    glDeleteProgram(skyboxAtlasShader);
 
     glfwTerminate();
     std::cout << "\n[OK] Application closed successfully" << std::endl;
@@ -597,6 +729,46 @@ void processInput(GLFWwindow* window, Camera& camera, float deltaTime)
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 {
     glViewport(0, 0, width, height);
+}
+
+// Mouse movement callback
+void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
+{
+    if (!g_camera) return; // Safety check
+    
+    float xpos = static_cast<float>(xposIn);
+    float ypos = static_cast<float>(yposIn);
+
+    if (firstMouse)
+    {
+        lastX = xpos;
+        lastY = ypos;
+        firstMouse = false;
+    }
+
+    float xoffset = xpos - lastX;
+    float yoffset = lastY - ypos; // Reversed since y-coordinates go from bottom to top
+
+    lastX = xpos;
+    lastY = ypos;
+
+    // Only process mouse movement if mouse is captured
+    if (mouseCaptured)
+    {
+        g_camera->ProcessMouseMovement(xoffset, yoffset);
+    }
+}
+
+// Mouse scroll callback
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
+{
+    if (!g_camera) return; // Safety check
+    
+    // Only process scroll if mouse is captured
+    if (mouseCaptured)
+    {
+        g_camera->ProcessMouseScroll(static_cast<float>(yoffset));
+    }
 }
 
 std::string loadShaderFromFile(const char* filePath)
@@ -752,15 +924,126 @@ void renderQuad()
 // Render the ground plane
 void renderGroundPlane(unsigned int shader, const glm::mat4& model)
 {
+    // Create ground texture once from file
+    if (groundPlaneTexture == 0)
+    {
+        std::cout << "[Ground] Loading ground texture from file..." << std::endl;
+        
+        // Try to load ground texture from assets/textures/ground.*
+        const char* groundPaths[] = {
+            "assets/textures/ground.jpg",
+            "assets/textures/ground.png",
+            "assets/textures/ground.jpeg"
+        };
+        
+        bool textureLoaded = false;
+        
+        for (const char* path : groundPaths)
+        {
+            std::filesystem::path absPath = std::filesystem::absolute(path);
+            std::cout << "[Ground] Trying: " << path << std::endl;
+            std::cout << "[Ground]   Absolute: " << absPath << std::endl;
+            std::cout << "[Ground]   Exists: " << (std::filesystem::exists(absPath) ? "YES" : "NO") << std::endl;
+            
+            int width, height, nrChannels;
+            stbi_set_flip_vertically_on_load(true); // Flip for correct orientation
+            unsigned char* data = stbi_load(path, &width, &height, &nrChannels, 0);
+            
+            if (data)
+            {
+                GLenum format = GL_RGB;
+                if (nrChannels == 1)
+                    format = GL_RED;
+                else if (nrChannels == 3)
+                    format = GL_RGB;
+                else if (nrChannels == 4)
+                    format = GL_RGBA;
+                
+                glGenTextures(1, &groundPlaneTexture);
+                glBindTexture(GL_TEXTURE_2D, groundPlaneTexture);
+                glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+                glGenerateMipmap(GL_TEXTURE_2D);
+                
+                // CRITICAL: Proper texture parameters for ground
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                
+                stbi_image_free(data);
+                
+                std::cout << "[Ground] ? SUCCESS! Ground texture loaded" << std::endl;
+                std::cout << "[Ground]   Path: " << path << std::endl;
+                std::cout << "[Ground]   Resolution: " << width << "x" << height << std::endl;
+                std::cout << "[Ground]   Channels: " << nrChannels << " (format: ";
+                if (format == GL_RED) std::cout << "RED";
+                else if (format == GL_RGB) std::cout << "RGB";
+                else if (format == GL_RGBA) std::cout << "RGBA";
+                std::cout << ")" << std::endl;
+                std::cout << "[Ground]   Texture ID: " << groundPlaneTexture << std::endl;
+                std::cout << "[Ground]   Wrap: GL_REPEAT, Filter: MIPMAP_LINEAR" << std::endl;
+                
+                textureLoaded = true;
+                break;
+            }
+            else
+            {
+                const char* reason = stbi_failure_reason();
+                std::cout << "[Ground]   ? FAILED: " << (reason ? reason : "Unknown error") << std::endl;
+            }
+        }
+        
+        // Fallback to procedural texture if loading failed
+        if (!textureLoaded)
+        {
+            std::cout << "[Ground] WARNING: Could not load ground texture from file!" << std::endl;
+            std::cout << "[Ground] Creating procedural fallback texture..." << std::endl;
+            
+            const int texSize = 256;
+            unsigned char* texData = new unsigned char[texSize * texSize * 3];
+            
+            for (int y = 0; y < texSize; ++y)
+            {
+                for (int x = 0; x < texSize; ++x)
+                {
+                    int idx = (y * texSize + x) * 3;
+                    
+                    // Create subtle checkerboard pattern
+                    bool checker = ((x / 32) % 2) ^ ((y / 32) % 2);
+                    unsigned char baseColor = checker ? 60 : 80;
+                    
+                    texData[idx + 0] = baseColor;     // R
+                    texData[idx + 1] = baseColor;     // G
+                    texData[idx + 2] = baseColor;     // B
+                }
+            }
+            
+            glGenTextures(1, &groundPlaneTexture);
+            glBindTexture(GL_TEXTURE_2D, groundPlaneTexture);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texSize, texSize, 0, GL_RGB, GL_UNSIGNED_BYTE, texData);
+            glGenerateMipmap(GL_TEXTURE_2D);
+            
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            
+            delete[] texData;
+            
+            std::cout << "[Ground] Fallback texture created (ID: " << groundPlaneTexture << ")" << std::endl;
+        }
+    }
+    
     if (groundPlaneVAO == 0)
     {
         // Generate buffers only once
+        // UVs scaled for tiling (10x10 repeat to match ground scale)
         float planeVertices[] = {
-            // Positions          // Normals           // TexCoords
+            // Positions          // Normals           // TexCoords (scaled for tiling)
             -5.0f, 0.0f, -5.0f,   0.0f, 1.0f, 0.0f,   0.0f, 0.0f,
-             5.0f, 0.0f, -5.0f,   0.0f, 1.0f, 0.0f,   1.0f, 0.0f,
-             5.0f, 0.0f,  5.0f,   0.0f, 1.0f, 0.0f,   1.0f, 1.0f,
-            -5.0f, 0.0f,  5.0f,   0.0f, 1.0f, 0.0f,   0.0f, 1.0f
+             5.0f, 0.0f, -5.0f,   0.0f, 1.0f, 0.0f,   10.0f, 0.0f,
+             5.0f, 0.0f,  5.0f,   0.0f, 1.0f, 0.0f,   10.0f, 10.0f,
+            -5.0f, 0.0f,  5.0f,   0.0f, 1.0f, 0.0f,   0.0f, 10.0f
         };
 
         glGenVertexArrays(1, &groundPlaneVAO);
@@ -778,16 +1061,23 @@ void renderGroundPlane(unsigned int shader, const glm::mat4& model)
 
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
+        
+        std::cout << "[Ground] Ground plane geometry initialized (10x10 UV tiling)" << std::endl;
     }
 
+    // CRITICAL: Bind ground texture to correct unit BEFORE drawing
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, groundPlaneTexture);
+    
+    // Set model matrix and draw
     glBindVertexArray(groundPlaneVAO);
     glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, glm::value_ptr(model));
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
     glBindVertexArray(0);
 }
 
-// Process debug keys (F1-F8, B, O, D, T, G, +/-, [/])
-void processDebugKeys(GLFWwindow* window)
+// Process debug keys (F1-F8, B, O, V, T, G, C, K, +/-, [/])
+void processDebugKeys(GLFWwindow* window, SkyboxAtlas* skyboxAtlas)
 {
     // F1: Toggle Shadows
     if (glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS && !f1Pressed)
@@ -953,6 +1243,43 @@ void processDebugKeys(GLFWwindow* window)
     else if (glfwGetKey(window, GLFW_KEY_G) == GLFW_RELEASE)
     {
         gPressed = false;
+    }
+
+    // C: Toggle City
+    if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS && !cPressed)
+    {
+        enableCity = !enableCity;
+        std::cout << "City " << (enableCity ? "ENABLED" : "DISABLED") << std::endl;
+        cPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_C) == GLFW_RELEASE)
+    {
+        cPressed = false;
+    }
+
+    // K: Toggle Skybox Mode
+    if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS && !kPressed)
+    {
+        // Only allow atlas mode if it's available
+        if (!useSkyboxAtlas && skyboxAtlas->IsInitialized())
+        {
+            useSkyboxAtlas = true;
+            std::cout << "Skybox Mode: ATLAS" << std::endl;
+        }
+        else if (useSkyboxAtlas)
+        {
+            useSkyboxAtlas = false;
+            std::cout << "Skybox Mode: CUBEMAP" << std::endl;
+        }
+        else
+        {
+            std::cout << "Skybox Mode: CUBEMAP (Atlas not available)" << std::endl;
+        }
+        kPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_K) == GLFW_RELEASE)
+    {
+        kPressed = false;
     }
 
     // Legacy F5-F8 keys still work

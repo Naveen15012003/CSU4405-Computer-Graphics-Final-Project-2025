@@ -34,6 +34,12 @@ public:
     // Returns the projection matrix
     glm::mat4 GetProjectionMatrix(float aspectRatio, float near = 0.1f, float far = 100.0f) const;
 
+    // Process mouse movement
+    void ProcessMouseMovement(float xoffset, float yoffset, bool constrainPitch = true);
+
+    // Process mouse scroll
+    void ProcessMouseScroll(float yoffset);
+
 private:
     // Calculates the front vector from the Camera's (updated) Euler Angles
     void updateCameraVectors();

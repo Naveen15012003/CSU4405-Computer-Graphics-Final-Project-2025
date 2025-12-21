@@ -147,6 +147,9 @@ echo === Post-Build Complete ===</Command>
     <ClCompile Include="src\ShadowMap.cpp" />
     <ClCompile Include="src\HUD.cpp" />
     <ClCompile Include="src\PostProcessor.cpp" />
+    <ClCompile Include="src\Building.cpp" />
+    <ClCompile Include="src\City.cpp" />
+    <ClCompile Include="src\SkyboxAtlas.cpp" />
     <ClCompile Include="external\glad\src\glad.c" />
   </ItemGroup>
   <ItemGroup>
@@ -161,6 +164,9 @@ echo === Post-Build Complete ===</Command>
     <ClInclude Include="include\ShadowMap.h" />
     <ClInclude Include="include\HUD.h" />
     <ClInclude Include="include\PostProcessor.h" />
+    <ClInclude Include="include\Building.h" />
+    <ClInclude Include="include\City.h" />
+    <ClInclude Include="include\SkyboxAtlas.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\vertex.glsl" />
@@ -177,6 +183,10 @@ echo === Post-Build Complete ===</Command>
     <None Include="shaders\postprocess.frag" />
     <None Include="shaders\bloom_extract.frag" />
     <None Include="shaders\blur.frag" />
+    <None Include="shaders\building.vert" />
+    <None Include="shaders\building.frag" />
+    <None Include="shaders\skybox_atlas.vert" />
+    <None Include="shaders\skybox_atlas.frag" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
