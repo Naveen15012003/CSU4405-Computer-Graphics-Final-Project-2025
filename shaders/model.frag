@@ -1,6 +1,8 @@
 #version 330 core
 
-out vec4 FragColor;
+// MRT outputs for HDR + Bloom
+layout(location = 0) out vec4 FragColor;      // Main HDR color
+layout(location = 1) out vec4 BrightColor;    // Brightness for bloom
 
 in vec3 FragPos;
 in vec3 Normal;
@@ -31,6 +33,9 @@ uniform sampler2D shadowMap;
 uniform bool enableShadows;
 uniform bool uUsePCF;
 uniform bool enableGammaCorrection;
+
+// Bloom threshold
+uniform float bloomThreshold;
 
 // Shadow calculation with HIGHLY VISIBLE PCF difference
 float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
@@ -87,63 +92,6 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
     return shadow;
 }
 
-// Blinn-Phong lighting calculation for directional light
-vec3 CalcDirLight(vec3 normal, vec3 viewDir, vec3 albedo)
-{
-    vec3 lightDir = normalize(-dirLightDir);
-    
-    // Diffuse
-    float diff = max(dot(normal, lightDir), 0.0);
-    
-    // Specular (Blinn-Phong)
-    vec3 halfwayDir = normalize(lightDir + viewDir);
-    float spec = pow(max(dot(normal, halfwayDir), 0.0), material.shininess);
-    
-    // Combine
-    vec3 ambient = 0.15 * dirLightColor * albedo;
-    vec3 diffuse = diff * dirLightColor * albedo;
-    vec3 specular = spec * dirLightColor * 0.5;
-    
-    // Shadow
-    float shadow = 0.0;
-    if (enableShadows)
-    {
-        shadow = ShadowCalculation(FragPosLightSpace, normal, lightDir);
-    }
-    
-    // Apply shadow only to diffuse and specular
-    return ambient + (1.0 - shadow) * (diffuse + specular);
-}
-
-// Point light calculation with attenuation
-vec3 CalcPointLight(vec3 normal, vec3 viewDir, vec3 albedo)
-{
-    vec3 lightDir = normalize(pointLightPos - FragPos);
-    
-    // Attenuation
-    float distance = length(pointLightPos - FragPos);
-    float attenuation = 1.0 / (pointLightConstant + pointLightLinear * distance + 
-                               pointLightQuadratic * (distance * distance));
-    
-    // Diffuse
-    float diff = max(dot(normal, lightDir), 0.0);
-    
-    // Specular (Blinn-Phong)
-    vec3 halfwayDir = normalize(lightDir + viewDir);
-    float spec = pow(max(dot(normal, halfwayDir), 0.0), material.shininess);
-    
-    // Combine
-    vec3 ambient = 0.1 * pointLightColor * albedo;
-    vec3 diffuse = diff * pointLightColor * albedo;
-    vec3 specular = spec * pointLightColor * 0.3;
-    
-    ambient *= attenuation;
-    diffuse *= attenuation;
-    specular *= attenuation;
-    
-    return ambient + diffuse + specular;
-}
-
 void main()
 {
     // Sample texture
@@ -164,20 +112,64 @@ void main()
     vec3 norm = normalize(Normal);
     vec3 viewDir = normalize(viewPos - FragPos);
     
-    // Calculate lighting
-    vec3 result = vec3(0.0);
+    // Ambient
+    vec3 ambient = 0.3 * dirLightColor;
     
-    // Directional light (with shadows)
-    result += CalcDirLight(norm, viewDir, albedo);
+    // Directional light
+    vec3 lightDir = normalize(-dirLightDir);
+    float diff = max(dot(norm, lightDir), 0.0);
+    vec3 diffuse = diff * dirLightColor;
     
-    // Point light (no shadows)
-    result += CalcPointLight(norm, viewDir, albedo);
+    // Specular
+    vec3 halfwayDir = normalize(lightDir + viewDir);
+    float spec = pow(max(dot(norm, halfwayDir), 0.0), material.shininess);
+    vec3 specular = spec * dirLightColor * 0.5;
     
-    // Gamma correction
-    if (enableGammaCorrection)
+    // Shadow
+    float shadow = 0.0;
+    if (enableShadows)
     {
-        result = pow(result, vec3(1.0/2.2));
+        shadow = ShadowCalculation(FragPosLightSpace, norm, lightDir);
     }
     
-    FragColor = vec4(result, 1.0);
+    vec3 dirResult = (ambient + (1.0 - shadow) * (diffuse + specular));
+    
+    // Point light calculation with attenuation
+    float distance = length(pointLightPos - FragPos);
+    float attenuation = 1.0 / (pointLightConstant + pointLightLinear * distance + 
+                               pointLightQuadratic * (distance * distance));
+    
+    vec3 pointLightDir = normalize(pointLightPos - FragPos);
+    float pointDiff = max(dot(norm, pointLightDir), 0.0);
+    vec3 pointDiffuse = pointDiff * pointLightColor * attenuation;
+    
+    vec3 pointHalfway = normalize(pointLightDir + viewDir);
+    float pointSpec = pow(max(dot(norm, pointHalfway), 0.0), material.shininess);
+    vec3 pointSpecular = pointSpec * pointLightColor * attenuation * 0.5;
+    
+    vec3 pointResult = (pointDiffuse + pointSpecular);
+    
+    // Combine
+    vec3 result = dirResult + pointResult;
+    vec3 color = result * texture(material.diffuse1, TexCoords).rgb;
+    
+    // Gamma correction (if enabled)
+    if (enableGammaCorrection)
+    {
+        color = pow(color, vec3(1.0/2.2));
+    }
+    
+    // Output to MRT
+    FragColor = vec4(color, 1.0);
+    
+    // Brightness threshold for bloom
+    float brightness = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    if (brightness > bloomThreshold)
+    {
+        BrightColor = vec4(color, 1.0);
+    }
+    else
+    {
+        BrightColor = vec4(0.0, 0.0, 0.0, 1.0);
+    }
 }

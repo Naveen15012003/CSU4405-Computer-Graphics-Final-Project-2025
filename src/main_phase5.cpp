@@ -10,12 +10,13 @@
 #include <string>
 #include <filesystem>
 
-// Phase 2 + 3 + 4 includes
+// Phase 2 + 3 + 4 + 5 includes
 #include "Camera.h"
 #include "Model.h"
 #include "Skybox.h"
 #include "ShadowMap.h"
 #include "HUD.h"
+#include "PostProcessor.h"
 
 // Window dimensions
 const unsigned int SCR_WIDTH = 800;
@@ -41,11 +42,35 @@ bool mouseCaptured = true;
 bool animationPaused = false;
 float cubeRotationAngle = 0.0f;
 
+// Phase 5 additions
+bool enablePostProcessing = true;  // POST-PROCESSING NOW ON BY DEFAULT
+bool enableBloom = true;
+float exposure = 1.0f;
+const float EXPOSURE_STEP = 0.1f;
+float bloomStrength = 0.4f;
+const float BLOOM_STRENGTH_STEP = 0.05f;
+float bloomThreshold = 1.0f;
+const float THRESHOLD_STEP = 0.1f;
+int debugViewMode = 0; // 0=normal, 1=HDR only, 2=bright pass, 3=bloom blur
+
 // Key press tracking
 bool f1Pressed = false;
 bool f2Pressed = false;
 bool f3Pressed = false;
 bool f4Pressed = false;
+bool f5Pressed = false;
+bool f6Pressed = false;
+bool f7Pressed = false;
+bool f8Pressed = false;
+bool bPressed = false;
+bool oPressed = false;
+bool vPressed = false;  // Changed from dPressed to vPressed
+bool tPressed = false;
+bool gPressed = false;
+bool leftBracketPressed = false;
+bool rightBracketPressed = false;
+bool plusPressed = false;
+bool minusPressed = false;
 bool rPressed = false;
 bool spacePressed = false;
 bool pPressed = false;
@@ -104,27 +129,38 @@ int main()
         return -1;
     }
 
-    std::cout << "\n===============================================" << std::endl;
-    std::cout << "|  PHASE 4 - COMPLETE INTERACTIVE DEMO       |" << std::endl;
-    std::cout << "|  (Lighting + Shadows + Controls + HUD)     |" << std::endl;
-    std::cout << "===============================================" << std::endl;
+    std::cout << "\n====================================================" << std::endl;
+    std::cout << "|  PHASE 5 - HDR POST-PROCESSING                   |" << std::endl;
+    std::cout << "|  (Tone Mapping + Bloom + Exposure + Controls)   |" << std::endl;
+    std::cout << "====================================================" << std::endl;
     std::cout << "\nOpenGL Version: " << glGetString(GL_VERSION) << std::endl;
     std::cout << "GLFW Version: " << glfwGetVersionString() << std::endl;
     
     std::cout << "\n===================================" << std::endl;
-    std::cout << "  CONTROLS (See docs/CONTROLS.md)" << std::endl;
+    std::cout << "  HDR + BLOOM CONTROLS" << std::endl;
     std::cout << "===================================" << std::endl;
     std::cout << "  ESC - Exit" << std::endl;
     std::cout << "  WASD - Move camera" << std::endl;
     std::cout << "  SHIFT - Speed boost | CTRL - Precision" << std::endl;
     std::cout << "  R - Reset camera | SPACE - Toggle mouse" << std::endl;
     std::cout << "  P - Pause animation" << std::endl;
-    std::cout << "  F1-F4 - Toggle features" << std::endl;
+    std::cout << "\n  POST-PROCESSING:" << std::endl;
+    std::cout << "  O/F5 - Toggle Post-Processing" << std::endl;
+    std::cout << "  B/F6 - Toggle Bloom" << std::endl;
+    std::cout << "  +/-  - Exposure adjust" << std::endl;
+    std::cout << "  [/]  - Bloom strength" << std::endl;
+    std::cout << "  T/G  - Bloom threshold" << std::endl;
+    std::cout << "  V    - Cycle debug views" << std::endl;
+    std::cout << "  F4   - Toggle Gamma" << std::endl;
+    std::cout << "\n  SHADOWS:" << std::endl;
+    std::cout << "  F1 - Toggle shadows" << std::endl;
+    std::cout << "  F2 - Toggle PCF (soft shadows)" << std::endl;
+    std::cout << "  F3 - Toggle depth map debug" << std::endl;
     std::cout << "  Arrow Keys/[/] - Adjust light" << std::endl;
     std::cout << "===================================" << std::endl;
 
     std::cout << "Shadow Map Resolution: " << SHADOW_WIDTH << "x" << SHADOW_HEIGHT << std::endl;
-    std::cout << "\n=== Phase 4: Interactive Demo + HUD + Controls ===\n" << std::endl;
+    std::cout << "\n=== Phase 5: HDR + Tone Mapping + Bloom ===\n" << std::endl;
 
     // Enable depth testing
 
@@ -152,6 +188,10 @@ int main()
     HUD hud;
     hud.Initialize();
     std::cout << "[OK] HUD system initialized\n" << std::endl;
+
+    // Phase 5: Initialize Post-Processor
+    PostProcessor postProcessor(SCR_WIDTH, SCR_HEIGHT);
+    postProcessor.Initialize();
 
     // Create shadow map
     ShadowMap shadowMap(SHADOW_WIDTH, SHADOW_HEIGHT);
@@ -200,7 +240,7 @@ int main()
     }
 
     // Camera setup
-    Camera camera(glm::vec3(0.0f, 2.0f, 5.0f));
+    Camera camera(glm::vec3(0.0f, 5.0f, 15.0f));  // Zoomed out even more: Y=5, Z=15 (was Y=4, Z=12)
 
     // Phase 4: Enable mouse capture by default
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -246,7 +286,14 @@ int main()
         // Update FPS
         updateFPS(window);
 
+        // Phase 5: Begin post-processing render (if enabled AND not in debug mode)
+        bool usePostProcessing = enablePostProcessing && postProcessor.IsInitialized() && !showDepthMap;
+        if (usePostProcessing) {
+            postProcessor.BeginRender();
+        }
+
         // === PASS 1: SHADOW MAP (DEPTH PASS) ===
+        // CRITICAL: Shadow pass must NOT affect the current framebuffer clear
         
         // Light space matrix (orthographic for directional light)
         // Use the global lightDirection variable
@@ -299,9 +346,16 @@ int main()
 
         // === PASS 2: MAIN RENDER OR DEBUG VIEW ===
         
-        glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+        // Set up the target framebuffer for scene rendering
+        if (!usePostProcessing) {
+            // Render directly to screen
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+            glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            glEnable(GL_DEPTH_TEST);
+        }
+        // If using post-processing, HDR FBO is already bound by BeginRender()
 
         if (showDepthMap)
         {
@@ -369,6 +423,9 @@ int main()
 
             // Set material
             glUniform1f(glGetUniformLocation(modelShader, "material.shininess"), 32.0f);
+            
+            // Set bloom threshold for MRT
+            glUniform1f(glGetUniformLocation(modelShader, "bloomThreshold"), bloomThreshold);
 
             // Render ground plane
             renderGroundPlane(modelShader, groundModel);
@@ -385,37 +442,67 @@ int main()
             model->Draw(modelShader);
         }
 
-        // Phase 4: Render HUD overlay
+        // Phase 5: End post-processing render and apply effects (if it was started)
+        if (usePostProcessing) {
+            postProcessor.EndRender();
+            postProcessor.Render(exposure, enableBloom, enableGammaCorrection, bloomStrength, debugViewMode);
+        }
+
+        // Phase 4: Render HUD overlay (always on top)
         glDisable(GL_DEPTH_TEST);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         float hudY = 580.0f;
-        float hudScale = 1.5f;
+        float hudScale = 1.3f;
         glm::vec3 hudColor(0.0f, 1.0f, 0.0f);  // Green
 
         hud.RenderText("FPS: " + std::to_string(currentFPS), 10.0f, hudY, hudScale, hudColor);
-        hudY -= 20.0f;
-        hud.RenderText("Shadows: " + std::string(enableShadows ? "ON" : "OFF"), 10.0f, hudY, hudScale, hudColor);
-        hudY -= 20.0f;
-        hud.RenderText("PCF: " + std::string(enablePCF ? "ON" : "OFF"), 10.0f, hudY, hudScale, hudColor);
-        hudY -= 20.0f;
-        hud.RenderText("Debug: " + std::string(showDepthMap ? "ON" : "OFF"), 10.0f, hudY, hudScale, hudColor);
-        hudY -= 20.0f;
-        hud.RenderText("Gamma: " + std::string(enableGammaCorrection ? "ON" : "OFF"), 10.0f, hudY, hudScale, hudColor);
-        hudY -= 20.0f;
+        hudY -= 18.0f;
+        
+        // Phase 5: HDR Post-processing info
+        hud.RenderText("Post: " + std::string(enablePostProcessing ? "ON" : "OFF") + " (O)", 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        hud.RenderText("Bloom: " + std::string(enableBloom ? "ON" : "OFF") + " (B)", 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        
+        char expBuf[32];
+        snprintf(expBuf, sizeof(expBuf), "Exposure: %.1f (+/-)", exposure);
+        hud.RenderText(expBuf, 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        
+        char bloomStrBuf[32];
+        snprintf(bloomStrBuf, sizeof(bloomStrBuf), "Bloom Str: %.2f ([/])", bloomStrength);
+        hud.RenderText(bloomStrBuf, 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        
+        char threshBuf[32];
+        snprintf(threshBuf, sizeof(threshBuf), "Threshold: %.1f (T/G)", bloomThreshold);
+        hud.RenderText(threshBuf, 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        
+        const char* debugModes[] = {"Normal", "HDR Only", "Bright", "Bloom"};
+        hud.RenderText(std::string("View: ") + debugModes[debugViewMode] + " (V)", 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        
+        hud.RenderText("Shadows: " + std::string(enableShadows ? "ON" : "OFF") + " (F1)", 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        hud.RenderText("PCF: " + std::string(enablePCF ? "ON" : "OFF") + " (F2)", 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        hud.RenderText("Gamma: " + std::string(enableGammaCorrection ? "ON" : "OFF") + " (F4)", 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
         
         char posBuf[64];
         snprintf(posBuf, sizeof(posBuf), "Cam: (%.1f, %.1f, %.1f)", 
                  camera.Position.x, camera.Position.y, camera.Position.z);
-        hud.RenderText(posBuf, 10.0f, hudY, hudScale, hudColor);
-        hudY -= 20.0f;
+        hud.RenderText(posBuf, 10.0f, hudY, hudScale * 0.9f, hudColor);
+        hudY -= 18.0f;
         
-        hud.RenderText("Mouse: " + std::string(mouseCaptured ? "Captured" : "Free"), 
-                      10.0f, hudY, hudScale, hudColor);
+        hud.RenderText("Mouse: " + std::string(mouseCaptured ? "Captured" : "Free") + " (SPC)", 
+                      10.0f, hudY, hudScale * 0.9f, hudColor);
         
         if (animationPaused) {
-            hudY -= 20.0f;
+            hudY -= 18.0f;
             hud.RenderText("[PAUSED]", 10.0f, hudY, hudScale, glm::vec3(1.0f, 1.0f, 0.0f));
         }
 
@@ -432,6 +519,7 @@ int main()
     if (skybox) delete skybox;
     
     hud.Cleanup();
+    postProcessor.Cleanup();
     
     if (groundPlaneVAO != 0)
     {
@@ -614,7 +702,7 @@ void updateFPS(GLFWwindow* window)
     // Update title every second
     if (currentTime - lastTime >= 1.0)
     {
-        std::string title = "OpenGL Project - Phase 4 - FPS: " + std::to_string(frameCount);
+        std::string title = "OpenGL Project - Phase 5 (HDR + Bloom) - FPS: " + std::to_string(frameCount);
         glfwSetWindowTitle(window, title.c_str());
 
         currentFPS = frameCount; // Update currentFPS variable
@@ -698,9 +786,10 @@ void renderGroundPlane(unsigned int shader, const glm::mat4& model)
     glBindVertexArray(0);
 }
 
-// Process debug keys (F1-F4)
+// Process debug keys (F1-F8, B, O, D, T, G, +/-, [/])
 void processDebugKeys(GLFWwindow* window)
 {
+    // F1: Toggle Shadows
     if (glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS && !f1Pressed)
     {
         enableShadows = !enableShadows;
@@ -712,20 +801,11 @@ void processDebugKeys(GLFWwindow* window)
         f1Pressed = false;
     }
 
+    // F2: Toggle PCF
     if (glfwGetKey(window, GLFW_KEY_F2) == GLFW_PRESS && !f2Pressed)
     {
         enablePCF = !enablePCF;
-        std::cout << "\n=====================================================" << std::endl;
-        if (enablePCF) {
-            std::cout << "|  PCF: ON  - 7x7 Soft Shadows (49 samples)       |" << std::endl;
-            std::cout << "|  Shadow edges = SMOOTH and REALISTIC             |" << std::endl;
-            std::cout << "|  Noticeable blur with gradual transition         |" << std::endl;
-        } else {
-            std::cout << "|  PCF: OFF - Hard Shadows (1 sample)              |" << std::endl;
-            std::cout << "|  Shadow edges = SHARP and CRISP                  |" << std::endl;
-            std::cout << "|  Clean cut with no blur                          |" << std::endl;
-        }
-        std::cout << "=====================================================\n" << std::endl;
+        std::cout << "PCF " << (enablePCF ? "ENABLED" : "DISABLED") << std::endl;
         f2Pressed = true;
     }
     else if (glfwGetKey(window, GLFW_KEY_F2) == GLFW_RELEASE)
@@ -733,10 +813,11 @@ void processDebugKeys(GLFWwindow* window)
         f2Pressed = false;
     }
 
+    // F3: Toggle Depth Map Debug
     if (glfwGetKey(window, GLFW_KEY_F3) == GLFW_PRESS && !f3Pressed)
     {
         showDepthMap = !showDepthMap;
-        std::cout << "Depth Map Debug View " << (showDepthMap ? "ENABLED" : "DISABLED") << std::endl;
+        std::cout << "Depth Map Debug " << (showDepthMap ? "ENABLED" : "DISABLED") << std::endl;
         f3Pressed = true;
     }
     else if (glfwGetKey(window, GLFW_KEY_F3) == GLFW_RELEASE)
@@ -744,6 +825,7 @@ void processDebugKeys(GLFWwindow* window)
         f3Pressed = false;
     }
 
+    // F4: Toggle Gamma Correction
     if (glfwGetKey(window, GLFW_KEY_F4) == GLFW_PRESS && !f4Pressed)
     {
         enableGammaCorrection = !enableGammaCorrection;
@@ -753,6 +835,170 @@ void processDebugKeys(GLFWwindow* window)
     else if (glfwGetKey(window, GLFW_KEY_F4) == GLFW_RELEASE)
     {
         f4Pressed = false;
+    }
+
+    // O: Toggle Post-Processing
+    if (glfwGetKey(window, GLFW_KEY_O) == GLFW_PRESS && !oPressed)
+    {
+        enablePostProcessing = !enablePostProcessing;
+        std::cout << "Post-processing " << (enablePostProcessing ? "ENABLED" : "DISABLED") << std::endl;
+        oPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_O) == GLFW_RELEASE)
+    {
+        oPressed = false;
+    }
+
+    // B: Toggle Bloom
+    if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS && !bPressed)
+    {
+        enableBloom = !enableBloom;
+        std::cout << "Bloom " << (enableBloom ? "ENABLED" : "DISABLED") << std::endl;
+        bPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_B) == GLFW_RELEASE)
+    {
+        bPressed = false;
+    }
+
+    // D: Cycle Debug Views
+    if (glfwGetKey(window, GLFW_KEY_V) == GLFW_PRESS && !vPressed)  // Changed from D to V
+    {
+        debugViewMode = (debugViewMode + 1) % 4;
+        const char* modes[] = {"Normal", "HDR Only", "Bright Pass", "Bloom Blur"};
+        std::cout << "Debug View: " << modes[debugViewMode] << std::endl;
+        vPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_V) == GLFW_RELEASE)
+    {
+        vPressed = false;
+    }
+
+    // +/=: Increase Exposure
+    if ((glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS || 
+         glfwGetKey(window, GLFW_KEY_KP_ADD) == GLFW_PRESS) && !plusPressed)
+    {
+        exposure += EXPOSURE_STEP;
+        std::cout << "Exposure: " << exposure << std::endl;
+        plusPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_RELEASE && 
+             glfwGetKey(window, GLFW_KEY_KP_ADD) == GLFW_RELEASE)
+    {
+        plusPressed = false;
+    }
+
+    // -: Decrease Exposure
+    if ((glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS || 
+         glfwGetKey(window, GLFW_KEY_KP_SUBTRACT) == GLFW_PRESS) && !minusPressed)
+    {
+        exposure -= EXPOSURE_STEP;
+        if (exposure < 0.1f) exposure = 0.1f;
+        std::cout << "Exposure: " << exposure << std::endl;
+        minusPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_RELEASE && 
+             glfwGetKey(window, GLFW_KEY_KP_SUBTRACT) == GLFW_RELEASE)
+    {
+        minusPressed = false;
+    }
+
+    // [: Decrease Bloom Strength
+    if (glfwGetKey(window, GLFW_KEY_LEFT_BRACKET) == GLFW_PRESS && !leftBracketPressed)
+    {
+        bloomStrength -= BLOOM_STRENGTH_STEP;
+        if (bloomStrength < 0.0f) bloomStrength = 0.0f;
+        std::cout << "Bloom Strength: " << bloomStrength << std::endl;
+        leftBracketPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_LEFT_BRACKET) == GLFW_RELEASE)
+    {
+        leftBracketPressed = false;
+    }
+
+    // ]: Increase Bloom Strength
+    if (glfwGetKey(window, GLFW_KEY_RIGHT_BRACKET) == GLFW_PRESS && !rightBracketPressed)
+    {
+        bloomStrength += BLOOM_STRENGTH_STEP;
+        if (bloomStrength > 2.0f) bloomStrength = 2.0f;
+        std::cout << "Bloom Strength: " << bloomStrength << std::endl;
+        rightBracketPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_RIGHT_BRACKET) == GLFW_RELEASE)
+    {
+        rightBracketPressed = false;
+    }
+
+    // T: Decrease Threshold
+    if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS && !tPressed)
+    {
+        bloomThreshold -= THRESHOLD_STEP;
+        if (bloomThreshold < 0.1f) bloomThreshold = 0.1f;
+        std::cout << "Bloom Threshold: " << bloomThreshold << std::endl;
+        tPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_T) == GLFW_RELEASE)
+    {
+        tPressed = false;
+    }
+
+    // G: Increase Threshold
+    if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS && !gPressed)
+    {
+        bloomThreshold += THRESHOLD_STEP;
+        if (bloomThreshold > 5.0f) bloomThreshold = 5.0f;
+        std::cout << "Bloom Threshold: " << bloomThreshold << std::endl;
+        gPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_G) == GLFW_RELEASE)
+    {
+        gPressed = false;
+    }
+
+    // Legacy F5-F8 keys still work
+    if (glfwGetKey(window, GLFW_KEY_F5) == GLFW_PRESS && !f5Pressed)
+    {
+        enablePostProcessing = !enablePostProcessing;
+        std::cout << "Post-processing " << (enablePostProcessing ? "ENABLED" : "DISABLED") << std::endl;
+        f5Pressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_F5) == GLFW_RELEASE)
+    {
+        f5Pressed = false;
+    }
+
+    if (glfwGetKey(window, GLFW_KEY_F6) == GLFW_PRESS && !f6Pressed)
+    {
+        enableBloom = !enableBloom;
+        std::cout << "Bloom " << (enableBloom ? "ENABLED" : "DISABLED") << std::endl;
+        f6Pressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_F6) == GLFW_RELEASE)
+    {
+        f6Pressed = false;
+    }
+
+    if (glfwGetKey(window, GLFW_KEY_F7) == GLFW_PRESS && !f7Pressed)
+    {
+        exposure += EXPOSURE_STEP;
+        std::cout << "Exposure: " << exposure << std::endl;
+        f7Pressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_F7) == GLFW_RELEASE)
+    {
+        f7Pressed = false;
+    }
+
+    if (glfwGetKey(window, GLFW_KEY_F8) == GLFW_PRESS && !f8Pressed)
+    {
+        exposure -= EXPOSURE_STEP;
+        if (exposure < 0.1f) exposure = 0.1f;
+        std::cout << "Exposure: " << exposure << std::endl;
+        f8Pressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_F8) == GLFW_RELEASE)
+    {
+        f8Pressed = false;
     }
 }
 
@@ -766,26 +1012,14 @@ void updateLightDirection()
     lightDirection.y = sin(elevationRad);
     lightDirection.z = cos(elevationRad) * cos(azimuthRad);
     lightDirection = glm::normalize(lightDirection);
-    
-    // Throttle console output (only print occasionally)
-    static double lastPrint = 0.0;
-    double now = glfwGetTime();
-    if (now - lastPrint > 0.2) {
-        char buf[128];
-        snprintf(buf, sizeof(buf), "Light: (%.2f, %.2f, %.2f) | Az: %.1f Elev: %.1f", 
-                 lightDirection.x, lightDirection.y, lightDirection.z, 
-                 lightAzimuth, lightElevation);
-        std::cout << buf << std::endl;
-        lastPrint = now;
-    }
 }
 
-// Phase 4: Process light direction controls
+// Process light direction controls
 void processLightControls(GLFWwindow* window)
 {
     bool changed = false;
     
-    // Arrow keys rotate light azimuth
+    // Arrow keys rotate light azimuth (only when not used for other controls)
     if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) {
         lightAzimuth -= 2.0f;
         changed = true;
@@ -798,7 +1032,7 @@ void processLightControls(GLFWwindow* window)
     // Up/Down arrows change elevation
     if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
         lightElevation += 1.0f;
-        if (lightElevation > -5.0f) lightElevation = -5.0f;  // Keep some downward angle
+        if (lightElevation > -5.0f) lightElevation = -5.0f;
         changed = true;
     }
     if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
@@ -807,19 +1041,7 @@ void processLightControls(GLFWwindow* window)
         changed = true;
     }
     
-    // Bracket keys for fine elevation adjustment
-    if (glfwGetKey(window, GLFW_KEY_LEFT_BRACKET) == GLFW_PRESS) {
-        lightElevation -= 0.5f;
-        if (lightElevation < -89.0f) lightElevation = -89.0f;
-        changed = true;
-    }
-    if (glfwGetKey(window, GLFW_KEY_RIGHT_BRACKET) == GLFW_PRESS) {
-        lightElevation += 0.5f;
-        if (lightElevation > -5.0f) lightElevation = -5.0f;
-        changed = true;
-    }
-    
-    // Wrap azimuth to keep it in range
+    // Wrap azimuth
     if (lightAzimuth >= 360.0f) lightAzimuth -= 360.0f;
     if (lightAzimuth < 0.0f) lightAzimuth += 360.0f;
     

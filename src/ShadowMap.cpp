@@ -1,7 +1,7 @@
 #include "ShadowMap.h"
 
 ShadowMap::ShadowMap(unsigned int width, unsigned int height)
-    : m_Width(width), m_Height(height), m_FBO(0), m_DepthTexture(0)
+    : m_Width(width), m_Height(height), m_FBO(0), m_DepthTexture(0), m_PreviousFBO(0)
 {
     Init();
 }
@@ -62,6 +62,9 @@ void ShadowMap::Init()
 
 void ShadowMap::BindForWriting()
 {
+    // Save current framebuffer
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &m_PreviousFBO);
+    
     glBindFramebuffer(GL_FRAMEBUFFER, m_FBO);
     glViewport(0, 0, m_Width, m_Height);
     glClear(GL_DEPTH_BUFFER_BIT);
@@ -75,5 +78,6 @@ void ShadowMap::BindForReading(GLenum textureUnit)
 
 void ShadowMap::Unbind()
 {
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    // Restore previous framebuffer (HDR FBO or screen FBO)
+    glBindFramebuffer(GL_FRAMEBUFFER, m_PreviousFBO);
 }

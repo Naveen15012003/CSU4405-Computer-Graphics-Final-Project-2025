@@ -18,7 +18,7 @@ public:
     // Bind for reading (main pass)
     void BindForReading(GLenum textureUnit);
     
-    // Unbind
+    // Unbind (restore previous framebuffer)
     void Unbind();
 
     // Getters
@@ -31,6 +31,7 @@ private:
     unsigned int m_DepthTexture;
     unsigned int m_Width;
     unsigned int m_Height;
+    GLint m_PreviousFBO;  // Store previous FBO to restore after shadow pass
     
     void Init();
 };
