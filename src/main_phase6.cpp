@@ -1,4 +1,4 @@
-#include <glad/glad.h>
+﻿#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -21,9 +21,13 @@
 #include "City.h"
 #include "SkyboxAtlas.h"
 
+// Phase 8 includes
+#include "EndlessSceneManager.h"
+#include "EndlessCityManager.h"
+
 // Window dimensions
-const unsigned int SCR_WIDTH = 1920;  // Increased from 800 to 1920 (Full HD width)
-const unsigned int SCR_HEIGHT = 1080; // Increased from 600 to 1080 (Full HD height)
+const unsigned int SCR_WIDTH = 1920;
+const unsigned int SCR_HEIGHT = 1080;
 
 // Shadow map resolution
 const unsigned int SHADOW_WIDTH = 2048;
@@ -46,7 +50,7 @@ bool animationPaused = false;
 float cubeRotationAngle = 0.0f;
 
 // Phase 5 additions
-bool enablePostProcessing = true;  // POST-PROCESSING NOW ON BY DEFAULT
+bool enablePostProcessing = true;
 bool enableBloom = true;
 float exposure = 1.0f;
 const float EXPOSURE_STEP = 0.1f;
@@ -54,13 +58,18 @@ float bloomStrength = 0.4f;
 const float BLOOM_STRENGTH_STEP = 0.05f;
 float bloomThreshold = 1.0f;
 const float THRESHOLD_STEP = 0.1f;
-int debugViewMode = 0; // 0=normal, 1=HDR only, 2=bright pass, 3=bloom blur
+int debugViewMode = 0;
 
 // Phase 6 additions
 bool enableCity = true;
-bool useSkyboxAtlas = false; // DEFAULT TO CUBEMAP for final demo (most robust)
+bool useSkyboxAtlas = false;
 bool cPressed = false;
 bool kPressed = false;
+
+// Phase 8 additions
+bool enableEndlessScene = false;  // DISABLED: Props hidden, only show 3 animated cubes
+bool enableEndlessCity = true;    // Re-enabled
+bool ePressed = false;
 
 // Key press tracking
 bool f1Pressed = false;
@@ -73,7 +82,7 @@ bool f7Pressed = false;
 bool f8Pressed = false;
 bool bPressed = false;
 bool oPressed = false;
-bool vPressed = false;  // Changed from dPressed to vPressed
+bool vPressed = false;
 bool tPressed = false;
 bool gPressed = false;
 bool leftBracketPressed = false;
@@ -93,14 +102,23 @@ float lightElevation = -45.0f;
 float lastX = SCR_WIDTH / 2.0f;
 float lastY = SCR_HEIGHT / 2.0f;
 bool firstMouse = true;
-Camera* g_camera = nullptr; // Global camera pointer for callbacks
+Camera* g_camera = nullptr;
 
-// Function prototypes
+// Shadow map pointer (will be initialized after OpenGL context)
+ShadowMap* shadowMap = nullptr;
+
+// Phase 8: Endless scene manager
+EndlessSceneManager* endlessScene = nullptr;
+EndlessCityManager* endlessCity = nullptr;  // NEW: Endless city manager
+
+ // Function prototypes
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
 void processInput(GLFWwindow* window, Camera& camera, float deltaTime);
 void processDebugKeys(GLFWwindow* window, SkyboxAtlas* skyboxAtlas);
+void toggleEndlessScene(GLFWwindow* window);
+void toggleEndlessCity(GLFWwindow* window);  // NEW: Toggle endless city
 void processLightControls(GLFWwindow* window);
 std::string loadShaderFromFile(const char* filePath);
 unsigned int compileShader(unsigned int type, const char* source);
@@ -109,11 +127,12 @@ void updateFPS(GLFWwindow* window);
 void renderQuad();
 void renderGroundPlane(unsigned int shader, const glm::mat4& model);
 void updateLightDirection();
+unsigned int loadGroundTexture(const char* path);
 
 // Ground plane VAO
 unsigned int groundPlaneVAO = 0;
 unsigned int groundPlaneVBO = 0;
-unsigned int groundPlaneTexture = 0; // Dedicated ground texture
+unsigned int groundPlaneTexture = 0;
 
 int main()
 {
@@ -130,7 +149,7 @@ int main()
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
     // Create window
-    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "OpenGL Project - Phase 3", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "OpenGL Project - Phase 6 (City + Skybox Atlas)", NULL, NULL);
     if (window == NULL)
     {
         std::cerr << "Failed to create GLFW window" << std::endl;
@@ -150,15 +169,15 @@ int main()
     }
 
     std::cout << "\n====================================================" << std::endl;
-    std::cout << "|  PHASE 6 - LAB2 INTEGRATION + PROCEDURAL CITY   |" << std::endl;
-    std::cout << "|  (Textured Buildings + Atlas Skybox)            |" << std::endl;
+    std::cout << "|  PHASE 6 - CITY GENERATION & SKYBOX ATLAS     |" << std::endl;
+    std::cout << "|  (Procedural city with atlas skybox)          |" << std::endl;
     std::cout << "====================================================" << std::endl;
 
     std::cout << "\nOpenGL Version: " << glGetString(GL_VERSION) << std::endl;
     std::cout << "GLFW Version: " << glfwGetVersionString() << std::endl;
     
     std::cout << "\n===================================" << std::endl;
-    std::cout << "  HDR + BLOOM CONTROLS" << std::endl;
+    std::cout << "  CONTROLS" << std::endl;
     std::cout << "===================================" << std::endl;
     std::cout << "  ESC - Exit" << std::endl;
     std::cout << "  WASD - Move camera" << std::endl;
@@ -173,27 +192,76 @@ int main()
     std::cout << "  T/G  - Bloom threshold" << std::endl;
     std::cout << "  V    - Cycle debug views" << std::endl;
     std::cout << "  F4   - Toggle Gamma" << std::endl;
-    std::cout << "\n  PHASE 6 (LAB2):" << std::endl;
+    std::cout << "\n  PHASE 6 (CITY + SKYBOX ATLAS):" << std::endl;
     std::cout << "  C    - Toggle City ON/OFF" << std::endl;
     std::cout << "  K    - Toggle Skybox (Cubemap/Atlas)" << std::endl;
+    std::cout << "\n  PHASE 8 (ENDLESS SCENE):" << std::endl;
+    std::cout << "  E    - Toggle Endless Scene ON/OFF" << std::endl;
+    std::cout << "  U    - Toggle Endless City ON/OFF" << std::endl;
     std::cout << "\n  SHADOWS:" << std::endl;
     std::cout << "  F1 - Toggle shadows" << std::endl;
     std::cout << "  F2 - Toggle PCF (soft shadows)" << std::endl;
     std::cout << "  F3 - Toggle depth map debug" << std::endl;
-    std::cout << "  Arrow Keys/[/] - Adjust light" << std::endl;
+    std::cout << "  Arrow Keys - Adjust light" << std::endl;
     std::cout << "===================================" << std::endl;
 
     std::cout << "Shadow Map Resolution: " << SHADOW_WIDTH << "x" << SHADOW_HEIGHT << std::endl;
-    std::cout << "\n=== Phase 5: HDR + Tone Mapping + Bloom ===\n" << std::endl;
+    std::cout << "\n=== Phase 6: City Generation + Skybox Atlas ===\n" << std::endl;
+    
+    std::cout << "\n########################################" << std::endl;
+    std::cout << "#  PHASE 6 - CITY + SKYBOX ATLAS      #" << std::endl;
+    std::cout << "########################################" << std::endl;
+    std::cout << "Features:" << std::endl;
+    std::cout << "  - Procedural city generation" << std::endl;
+    std::cout << "  - Skybox atlas rendering" << std::endl;
+    std::cout << "  - Advanced post-processing" << std::endl;
+    std::cout << "  - Shadow mapping with PCF" << std::endl;
+    std::cout << "\nPress C to toggle city ON/OFF" << std::endl;
+    std::cout << "Press K to toggle skybox mode" << std::endl;
+    std::cout << "########################################\n" << std::endl;
 
     // Enable depth testing
-
     glEnable(GL_DEPTH_TEST);
+
+    // Initialize shadow map AFTER OpenGL context is ready
+    shadowMap = new ShadowMap(SHADOW_WIDTH, SHADOW_HEIGHT);
+    
+    // Load ground texture
+    std::cout << "Loading ground texture..." << std::endl;
+    groundPlaneTexture = loadGroundTexture("assets/textures/ground.png");
+    if (groundPlaneTexture == 0) {
+        std::cout << "[WARN] Failed to load ground.png, trying ground.jpg..." << std::endl;
+        groundPlaneTexture = loadGroundTexture("assets/textures/ground.jpg");
+    }
+    if (groundPlaneTexture == 0) {
+        std::cout << "[WARN] No ground texture found, creating procedural checkerboard..." << std::endl;
+        // Create a simple checkerboard texture
+        unsigned char checkerboard[64][64][3];
+        for (int y = 0; y < 64; y++) {
+            for (int x = 0; x < 64; x++) {
+                bool isWhite = ((x / 8) + (y / 8)) % 2 == 0;
+                unsigned char color = isWhite ? 200 : 100;
+                checkerboard[y][x][0] = color;
+                checkerboard[y][x][1] = color;
+                checkerboard[y][x][2] = color;
+            }
+        }
+        glGenTextures(1, &groundPlaneTexture);
+        glBindTexture(GL_TEXTURE_2D, groundPlaneTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 64, 64, 0, GL_RGB, GL_UNSIGNED_BYTE, checkerboard);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        std::cout << "[OK] Created procedural ground texture" << std::endl;
+    } else {
+        std::cout << "[OK] Ground texture loaded successfully" << std::endl;
+    }
 
     // Build and compile shader programs
     std::cout << "Loading shaders..." << std::endl;
     
-    // Phase 3 shaders
     unsigned int modelShader = createShaderProgram("shaders/model.vert", "shaders/model.frag");
     unsigned int skyboxShader = createShaderProgram("shaders/skybox.vert", "shaders/skybox.frag");
     unsigned int shadowShader = createShaderProgram("shaders/shadow_depth.vert", "shaders/shadow_depth.frag");
@@ -240,13 +308,10 @@ int main()
     if (!atlasAvailable || !skyboxAtlas->IsInitialized())
     {
         std::cout << "[WARN] Skybox atlas not available - defaulting to CUBEMAP mode" << std::endl;
-        useSkyboxAtlas = false; // Force cubemap mode if atlas missing
+        useSkyboxAtlas = false;
     }
     
     std::cout << "[OK] Skybox atlas system initialized (Available: " << (atlasAvailable ? "YES" : "NO - using fallback") << ")\n" << std::endl;
-
-    // Create shadow map
-    ShadowMap shadowMap(SHADOW_WIDTH, SHADOW_HEIGHT);
 
     // Load model
     std::cout << "Loading model..." << std::endl;
@@ -260,6 +325,18 @@ int main()
         glfwTerminate();
         return -1;
     }
+
+    // Phase 8: Initialize Endless Scene
+    std::cout << "Initializing Phase 8: Endless Scene..." << std::endl;
+    endlessScene = new EndlessSceneManager();
+    endlessScene->initialize(model, modelShader);
+    std::cout << "[OK] Endless scene initialized\n" << std::endl;
+
+    // Phase 8: Initialize Endless City
+    std::cout << "Initializing Phase 8: Endless City..." << std::endl;
+    endlessCity = new EndlessCityManager();
+    endlessCity->initialize(buildingShader, modelShader);  // Use building shader for buildings, model shader for ground
+    std::cout << "[OK] Endless city initialized\n" << std::endl;
 
     // Load skybox
     std::cout << "Loading skybox..." << std::endl;
@@ -292,17 +369,16 @@ int main()
     }
 
     // Camera setup
-    Camera camera(glm::vec3(0.0f, 5.0f, 15.0f));  // Zoomed out even more: Y=5, Z=15 (was Y=4, Z=12)
-    g_camera = &camera; // Set global pointer for mouse callbacks
-
+    Camera camera(glm::vec3(0.0f, 5.0f, 15.0f), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f);
+    g_camera = &camera;
+    
     // Phase 4: Enable mouse capture by default
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     if (glfwRawMouseMotionSupported())
         glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
 
-    // Light setup - using global lightDirection variable
+    // Light setup
     glm::vec3 dirLightColor(1.0f, 1.0f, 0.95f);
-    
     glm::vec3 pointLightPos(2.0f, 3.0f, 2.0f);
     glm::vec3 pointLightColor(1.0f, 0.9f, 0.7f);
 
@@ -312,6 +388,7 @@ int main()
     std::cout << "  * Point light (no shadows)" << std::endl;
     std::cout << "  * Ground plane for shadow testing" << std::endl;
     std::cout << "  * Multiple cubes casting shadows" << std::endl;
+    std::cout << "  * Procedurally generated city" << std::endl;
     std::cout << "  * On-screen HUD overlay\n" << std::endl;
 
     // Phase 4: Delta time tracking
@@ -331,9 +408,21 @@ int main()
             cubeRotationAngle += deltaTime * 0.5f;
         }
 
+        // Phase 8: Update endless scene
+        if (endlessScene && enableEndlessScene && !animationPaused) {
+            endlessScene->update(deltaTime, camera.Position);
+        }
+
+        // Phase 8: Update endless city
+        if (endlessCity && enableEndlessCity && !animationPaused) {
+            endlessCity->update(deltaTime, camera.Position);
+        }
+
         // Input
         processInput(window, camera, deltaTime);
         processDebugKeys(window, skyboxAtlas);
+        toggleEndlessScene(window);
+        toggleEndlessCity(window);  // NEW: Toggle endless city
         processLightControls(window);
 
         // Update FPS
@@ -346,22 +435,17 @@ int main()
         }
 
         // === PASS 1: SHADOW MAP (DEPTH PASS) ===
-        // CRITICAL: Shadow pass must NOT affect the current framebuffer clear
-        
-        // Light space matrix (orthographic for directional light)
-        // Use the global lightDirection variable
-        // EXPANDED: Larger frustum to cover city buildings
-        float near_plane = 0.5f, far_plane = 50.0f;  // Increased from 10.0f to 50.0f
-        glm::mat4 lightProjection = glm::ortho(-50.0f, 50.0f, -50.0f, 50.0f, near_plane, far_plane);  // Expanded from -5/-5 to -50/-50
+        float near_plane = 0.5f, far_plane = 50.0f;
+        glm::mat4 lightProjection = glm::ortho(-50.0f, 50.0f, -50.0f, 50.0f, near_plane, far_plane);
         glm::mat4 lightView = glm::lookAt(
-            -lightDirection * 25.0f,  // Increased from 5.0f to 25.0f
+            -lightDirection * 25.0f,
             glm::vec3(0.0f, 0.0f, 0.0f),
             glm::vec3(0.0f, 1.0f, 0.0f)
         );
         glm::mat4 lightSpaceMatrix = lightProjection * lightView;
 
         // Render scene to shadow map
-        shadowMap.BindForWriting();
+        shadowMap->BindForWriting();
         glCullFace(GL_FRONT);
         glUseProgram(shadowShader);
         glUniformMatrix4fv(glGetUniformLocation(shadowShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
@@ -378,7 +462,6 @@ int main()
         glUniformMatrix4fv(glGetUniformLocation(shadowShader, "model"), 1, GL_FALSE, glm::value_ptr(cubeModel));
         model->Draw(shadowShader);
 
-        // Phase 4: Add extra cubes for better shadow demonstration
         // Cube 2 (left)
         glm::mat4 cube2Model = glm::mat4(1.0f);
         cube2Model = glm::translate(cube2Model, glm::vec3(-3.0f, 1.0f, -2.0f));
@@ -398,26 +481,21 @@ int main()
         // Phase 6: Render city buildings in shadow pass
         if (enableCity)
         {
-            // CRITICAL: Buildings must cast shadows
-            // Use dedicated shadow rendering method for efficiency
             city.RenderShadow(lightSpaceMatrix, shadowShader);
         }
 
-        shadowMap.Unbind();
+        shadowMap->Unbind();
         glCullFace(GL_BACK);
 
         // === PASS 2: MAIN RENDER OR DEBUG VIEW ===
         
-        // Set up the target framebuffer for scene rendering
         if (!usePostProcessing) {
-            // Render directly to screen
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
             glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             glEnable(GL_DEPTH_TEST);
         }
-        // If using post-processing, HDR FBO is already bound by BeginRender()
 
         if (showDepthMap)
         {
@@ -426,7 +504,7 @@ int main()
             glUseProgram(debugDepthShader);
             
             glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, shadowMap.GetDepthTexture());
+            glBindTexture(GL_TEXTURE_2D, shadowMap->GetDepthTexture());
             glUniform1i(glGetUniformLocation(debugDepthShader, "shadowMap"), 0);
             
             renderQuad();
@@ -436,15 +514,12 @@ int main()
         else
         {
             // Normal rendering
-            
-            // Matrices
             glm::mat4 projection = camera.GetProjectionMatrix((float)SCR_WIDTH / (float)SCR_HEIGHT);
             glm::mat4 view = camera.GetViewMatrix();
 
             // Render skybox first (choose mode)
             if (useSkyboxAtlas && skyboxAtlas->IsInitialized())
             {
-                // Lab2-style atlas skybox
                 glDepthFunc(GL_LEQUAL);
                 glUseProgram(skyboxAtlasShader);
                 glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
@@ -455,7 +530,6 @@ int main()
             }
             else if (skybox)
             {
-                // Original cubemap skybox
                 glDepthFunc(GL_LEQUAL);
                 glUseProgram(skyboxShader);
                 glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
@@ -468,12 +542,10 @@ int main()
             // Render scene with lighting and shadows
             glUseProgram(modelShader);
 
-            // Set matrices
             glUniformMatrix4fv(glGetUniformLocation(modelShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
             glUniformMatrix4fv(glGetUniformLocation(modelShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(glGetUniformLocation(modelShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
 
-            // Set lights (use global lightDirection variable)
             glUniform3fv(glGetUniformLocation(modelShader, "dirLightDir"), 1, glm::value_ptr(lightDirection));
             glUniform3fv(glGetUniformLocation(modelShader, "dirLightColor"), 1, glm::value_ptr(dirLightColor));
             
@@ -483,28 +555,21 @@ int main()
             glUniform1f(glGetUniformLocation(modelShader, "pointLightLinear"), 0.09f);
             glUniform1f(glGetUniformLocation(modelShader, "pointLightQuadratic"), 0.032f);
 
-            // Set camera
             glUniform3fv(glGetUniformLocation(modelShader, "viewPos"), 1, glm::value_ptr(camera.Position));
 
-            // Set shadow map
-            shadowMap.BindForReading(GL_TEXTURE1);
+            shadowMap->BindForReading(GL_TEXTURE1);
             glUniform1i(glGetUniformLocation(modelShader, "shadowMap"), 1);
 
-            // Set toggles
             glUniform1i(glGetUniformLocation(modelShader, "enableShadows"), enableShadows);
             glUniform1i(glGetUniformLocation(modelShader, "uUsePCF"), enablePCF);
             glUniform1i(glGetUniformLocation(modelShader, "enableGammaCorrection"), enableGammaCorrection);
-
-            // Set material
             glUniform1f(glGetUniformLocation(modelShader, "material.shininess"), 32.0f);
-            
-            // Set bloom threshold for MRT
             glUniform1f(glGetUniformLocation(modelShader, "bloomThreshold"), bloomThreshold);
 
             // Render ground plane
             renderGroundPlane(modelShader, groundModel);
 
-            // Render main animated cube
+            // Render main animated cube (center)
             glUniformMatrix4fv(glGetUniformLocation(modelShader, "model"), 1, GL_FALSE, glm::value_ptr(cubeModel));
             model->Draw(modelShader);
 
@@ -520,12 +585,10 @@ int main()
             {
                 glUseProgram(buildingShader);
                 
-                // Set matrices for buildings
                 glUniformMatrix4fv(glGetUniformLocation(buildingShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
                 glUniformMatrix4fv(glGetUniformLocation(buildingShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
                 glUniformMatrix4fv(glGetUniformLocation(buildingShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
                 
-                // Set lights
                 glUniform3fv(glGetUniformLocation(buildingShader, "dirLightDir"), 1, glm::value_ptr(lightDirection));
                 glUniform3fv(glGetUniformLocation(buildingShader, "dirLightColor"), 1, glm::value_ptr(dirLightColor));
                 glUniform3fv(glGetUniformLocation(buildingShader, "pointLightPos"), 1, glm::value_ptr(pointLightPos));
@@ -534,43 +597,59 @@ int main()
                 glUniform1f(glGetUniformLocation(buildingShader, "pointLightLinear"), 0.09f);
                 glUniform1f(glGetUniformLocation(buildingShader, "pointLightQuadratic"), 0.032f);
                 
-                // Set camera and shadow
                 glUniform3fv(glGetUniformLocation(buildingShader, "viewPos"), 1, glm::value_ptr(camera.Position));
-                shadowMap.BindForReading(GL_TEXTURE1);
+                shadowMap->BindForReading(GL_TEXTURE1);
                 glUniform1i(glGetUniformLocation(buildingShader, "shadowMap"), 1);
                 
-                // Set toggles
                 glUniform1i(glGetUniformLocation(buildingShader, "enableShadows"), enableShadows);
                 glUniform1i(glGetUniformLocation(buildingShader, "uUsePCF"), enablePCF);
                 glUniform1f(glGetUniformLocation(buildingShader, "bloomThreshold"), bloomThreshold);
                 
-                // Render city
                 city.Render(view, projection, lightSpaceMatrix, camera.Position);
+                
+                // CRITICAL: Reset OpenGL state after city rendering
+                glUseProgram(0);
+                glBindVertexArray(0);
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, 0);
+            }
+
+            // Phase 8: Render endless scene
+            if (endlessScene && enableEndlessScene)
+            {
+                glm::mat4 viewProj = projection * view;
+                endlessScene->render(viewProj);
+                
+                // Also render ground for endless scene
+                endlessScene->renderGround(view, projection);
+            }
+
+            // Phase 8: Render endless city
+            if (endlessCity && enableEndlessCity)
+            {
+                endlessCity->render(view, projection, lightSpaceMatrix, camera.Position);
             }
         }
 
-        // Phase 5: End post-processing render and apply effects (if it was started)
+        // Phase 5: End post-processing render and apply effects
         if (usePostProcessing) {
             postProcessor.EndRender();
             postProcessor.Render(exposure, enableBloom, enableGammaCorrection, bloomStrength, debugViewMode);
         }
 
-        // Phase 4: Render HUD overlay (always on top)
+        // Phase 4: Render HUD overlay
         glDisable(GL_DEPTH_TEST);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         float hudY = 580.0f;
         float hudScale = 1.3f;
-        glm::vec3 hudColor(0.0f, 1.0f, 0.0f);  // Green
+        glm::vec3 hudColor(0.0f, 1.0f, 0.0f);
 
         hud.RenderText("FPS: " + std::to_string(currentFPS), 10.0f, hudY, hudScale, hudColor);
         hudY -= 18.0f;
         
-        // Phase 5: HDR Post-processing info
         hud.RenderText("Post: " + std::string(enablePostProcessing ? "ON" : "OFF") + " (O)", 10.0f, hudY, hudScale, hudColor);
-        hudY -= 18.0f;
-        hud.RenderText("Bloom: " + std::string(enableBloom ? "ON" : "OFF") + " (B)", 10.0f, hudY, hudScale, hudColor);
         hudY -= 18.0f;
         
         char expBuf[32];
@@ -592,47 +671,60 @@ int main()
         hud.RenderText(std::string("View: ") + debugModes[debugViewMode] + " (V)", 10.0f, hudY, hudScale, hudColor);
         hudY -= 18.0f;
         
-        // Phase 6: City and Skybox mode
-        hud.RenderText("City: " + std::string(enableCity ? "ON" : "OFF") + " (C)", 10.0f, hudY, hudScale, hudColor);
-        hudY -= 18.0f;
-        
-        std::string skyboxModeText = "Skybox: ";
-        if (useSkyboxAtlas && skyboxAtlas->IsInitialized()) {
-            skyboxModeText += "Atlas";
-        } else if (!useSkyboxAtlas) {
-            skyboxModeText += "Cubemap";
-        } else {
-            skyboxModeText += "Cubemap (Atlas N/A)";
-        }
-        skyboxModeText += " (K)";
-        hud.RenderText(skyboxModeText, 10.0f, hudY, hudScale, hudColor);
-        hudY -= 18.0f;
-        
+        // Phase 6 graphics settings
         hud.RenderText("Shadows: " + std::string(enableShadows ? "ON" : "OFF") + " (F1)", 10.0f, hudY, hudScale, hudColor);
         hudY -= 18.0f;
+        
         hud.RenderText("PCF: " + std::string(enablePCF ? "ON" : "OFF") + " (F2)", 10.0f, hudY, hudScale, hudColor);
         hudY -= 18.0f;
+        
         hud.RenderText("Gamma: " + std::string(enableGammaCorrection ? "ON" : "OFF") + " (F4)", 10.0f, hudY, hudScale, hudColor);
         hudY -= 18.0f;
         
-        char posBuf[64];
-        snprintf(posBuf, sizeof(posBuf), "Cam: (%.1f, %.1f, %.1f)", 
-                 camera.Position.x, camera.Position.y, camera.Position.z);
-        hud.RenderText(posBuf, 10.0f, hudY, hudScale * 0.9f, hudColor);
+        hud.RenderText("Skybox: " + std::string(useSkyboxAtlas ? "ATLAS" : "CUBEMAP") + " (K)", 10.0f, hudY, hudScale, hudColor);
         hudY -= 18.0f;
         
-        hud.RenderText("Mouse: " + std::string(mouseCaptured ? "Captured" : "Free") + " (SPC)", 
-                      10.0f, hudY, hudScale * 0.9f, hudColor);
+        hud.RenderText("City: " + std::string(enableCity ? "ON" : "OFF") + " (C)", 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
         
-        if (animationPaused) {
+        hud.RenderText("Endless: " + std::string(enableEndlessScene ? "ON" : "OFF") + " (E)", 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        
+        hud.RenderText("City: " + std::string(enableEndlessCity ? "ON" : "OFF") + " (U)", 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        
+        // Camera position display
+        char camBuf[64];
+        snprintf(camBuf, sizeof(camBuf), "Cam: (%.1f, %.1f, %.1f)", camera.Position.x, camera.Position.y, camera.Position.z);
+        hud.RenderText(camBuf, 10.0f, hudY, hudScale * 0.9f, hudColor);
+        hudY -= 18.0f;
+        
+        hud.RenderText("Mouse: " + std::string(mouseCaptured ? "CAPTURED" : "FREE") + " (SPC)", 10.0f, hudY, hudScale * 0.9f, hudColor);
+        hudY -= 18.0f;
+        
+        if (endlessScene && enableEndlessScene) {
+            char segmentBuf[64];
+            snprintf(segmentBuf, sizeof(segmentBuf), "Segment: %d (Gen: %d)", 
+                     endlessScene->getCurrentSegmentIndex(),
+                     endlessScene->getTotalSegmentsGenerated());
+            hud.RenderText(segmentBuf, 10.0f, hudY, hudScale * 0.9f, hudColor);
             hudY -= 18.0f;
-            hud.RenderText("[PAUSED]", 10.0f, hudY, hudScale, glm::vec3(1.0f, 1.0f, 0.0f));
+        }
+        
+        if (endlessCity && enableEndlessCity) {
+            auto chunk = endlessCity->getCurrentChunk();
+            char cityBuf[64];
+            snprintf(cityBuf, sizeof(cityBuf), "CityChunk: (%d,%d) Buildings: %d",
+                     chunk.first,
+                     chunk.second,
+                     endlessCity->getTotalBuildingsGenerated());
+            hud.RenderText(cityBuf, 10.0f, hudY, hudScale * 0.9f, hudColor);
+            hudY -= 18.0f;
         }
 
         glDisable(GL_BLEND);
         glEnable(GL_DEPTH_TEST);
 
-        // Swap buffers and poll events
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
@@ -641,11 +733,24 @@ int main()
     delete model;
     if (skybox) delete skybox;
     if (skyboxAtlas) delete skyboxAtlas;
+    if (shadowMap) delete shadowMap;
     
+    // Phase 8: Cleanup endless scene
+    if (endlessScene) {
+        endlessScene->cleanup();
+        delete endlessScene;
+    }
+    
+    // Phase 8: Cleanup endless city
+    if (endlessCity) {
+        endlessCity->cleanup();
+        delete endlessCity;
+    }
+
     city.Cleanup();
     hud.Cleanup();
     postProcessor.Cleanup();
-    
+
     if (groundPlaneVAO != 0)
     {
         glDeleteVertexArrays(1, &groundPlaneVAO);
@@ -725,358 +830,7 @@ void processInput(GLFWwindow* window, Camera& camera, float deltaTime)
     if (glfwGetKey(window, GLFW_KEY_P) == GLFW_RELEASE) pPressed = false;
 }
 
-// Callback for window resize
-void framebuffer_size_callback(GLFWwindow* window, int width, int height)
-{
-    glViewport(0, 0, width, height);
-}
-
-// Mouse movement callback
-void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
-{
-    if (!g_camera) return; // Safety check
-    
-    float xpos = static_cast<float>(xposIn);
-    float ypos = static_cast<float>(yposIn);
-
-    if (firstMouse)
-    {
-        lastX = xpos;
-        lastY = ypos;
-        firstMouse = false;
-    }
-
-    float xoffset = xpos - lastX;
-    float yoffset = lastY - ypos; // Reversed since y-coordinates go from bottom to top
-
-    lastX = xpos;
-    lastY = ypos;
-
-    // Only process mouse movement if mouse is captured
-    if (mouseCaptured)
-    {
-        g_camera->ProcessMouseMovement(xoffset, yoffset);
-    }
-}
-
-// Mouse scroll callback
-void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
-{
-    if (!g_camera) return; // Safety check
-    
-    // Only process scroll if mouse is captured
-    if (mouseCaptured)
-    {
-        g_camera->ProcessMouseScroll(static_cast<float>(yoffset));
-    }
-}
-
-std::string loadShaderFromFile(const char* filePath)
-{
-    std::ifstream shaderFile;
-    std::stringstream shaderStream;
-
-    shaderFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-    try
-    {
-        shaderFile.open(filePath);
-        shaderStream << shaderFile.rdbuf();
-        shaderFile.close();
-        return shaderStream.str();
-    }
-    catch (std::ifstream::failure& e)
-    {
-        std::cerr << "ERROR: Failed to read shader file: " << filePath << std::endl;
-        return "";
-    }
-}
-
-// Compile a shader and check for errors
-unsigned int compileShader(unsigned int type, const char* source)
-{
-    unsigned int shader = glCreateShader(type);
-    glShaderSource(shader, 1, &source, NULL);
-    glCompileShader(shader);
-
-    // Check for compilation errors
-    int success;
-    char infoLog[1024];
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success)
-    {
-        glGetShaderInfoLog(shader, 1024, NULL, infoLog);
-        const char* shaderType = (type == GL_VERTEX_SHADER) ? "VERTEX" : "FRAGMENT";
-        std::cerr << "ERROR: " << shaderType << " Shader compilation failed\n" << infoLog << std::endl;
-        return 0;
-    }
-
-    return shader;
-}
-
-// Create shader program from vertex and fragment shader files
-unsigned int createShaderProgram(const char* vertexPath, const char* fragmentPath)
-{
-    // Load shader source code
-    std::string vertexCode = loadShaderFromFile(vertexPath);
-    std::string fragmentCode = loadShaderFromFile(fragmentPath);
-
-    if (vertexCode.empty() || fragmentCode.empty())
-    {
-        std::cerr << "ERROR: Failed to load shader files: " << vertexPath << " or " << fragmentPath << std::endl;
-        return 0;
-    }
-
-    const char* vShaderCode = vertexCode.c_str();
-    const char* fShaderCode = fragmentCode.c_str();
-
-    // Compile shaders
-    std::cout << "Compiling shaders: " << vertexPath << ", " << fragmentPath << std::endl;
-    unsigned int vertexShader = compileShader(GL_VERTEX_SHADER, vShaderCode);
-    unsigned int fragmentShader = compileShader(GL_FRAGMENT_SHADER, fShaderCode);
-
-    if (vertexShader == 0 || fragmentShader == 0)
-    {
-        std::cerr << "ERROR: Shader compilation failed for: " << vertexPath << " or " << fragmentPath << std::endl;
-        return 0;
-    }
-
-    // Link shaders into program
-    unsigned int shaderProgram = glCreateProgram();
-    glAttachShader(shaderProgram, vertexShader);
-    glAttachShader(shaderProgram, fragmentShader);
-    glLinkProgram(shaderProgram);
-
-    // Check for linking errors
-    int success;
-    char infoLog[1024];
-    glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
-    if (!success)
-    {
-        glGetProgramInfoLog(shaderProgram, 1024, NULL, infoLog);
-        std::cerr << "ERROR: Shader program linking failed\n" << infoLog << std::endl;
-        return 0;
-    }
-
-    // Delete shaders (no longer needed after linking)
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    std::cout << "[OK] Shaders compiled and linked: " << vertexPath << ", " << fragmentPath << std::endl;
-    return shaderProgram;
-}
-
-// Update FPS counter in window title (once per second)
-void updateFPS(GLFWwindow* window)
-{
-    double currentTime = glfwGetTime();
-    frameCount++;
-
-    // Update title every second
-    if (currentTime - lastTime >= 1.0)
-    {
-        std::string title = "OpenGL Project - Phase 5 (HDR + Bloom) - FPS: " + std::to_string(frameCount);
-        glfwSetWindowTitle(window, title.c_str());
-
-        currentFPS = frameCount; // Update currentFPS variable
-
-        frameCount = 0;
-        lastTime = currentTime;
-    }
-}
-
-// Render a fullscreen quad (for debug view)
-void renderQuad()
-{
-    static unsigned int quadVAO = 0, quadVBO;
-    if (quadVAO == 0)
-    {
-        float quadVertices[] = {
-            // positions    // texCoords
-            -1.0f,  1.0f, 0.0f,  0.0f, 1.0f,
-            -1.0f, -1.0f, 0.0f,  0.0f, 0.0f,
-             1.0f, -1.0f, 0.0f,  1.0f, 0.0f,
-             1.0f,  1.0f, 0.0f,  1.0f, 1.0f
-        };
-        
-        glGenVertexArrays(1, &quadVAO);
-        glGenBuffers(1, &quadVBO);
-        glBindVertexArray(quadVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
-        
-        // Position attribute
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-        
-        // Texture coord attribute  
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
-        glEnableVertexAttribArray(1);
-        
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
-    }
-
-    glBindVertexArray(quadVAO);
-    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-    glBindVertexArray(0);
-}
-
-// Render the ground plane
-void renderGroundPlane(unsigned int shader, const glm::mat4& model)
-{
-    // Create ground texture once from file
-    if (groundPlaneTexture == 0)
-    {
-        std::cout << "[Ground] Loading ground texture from file..." << std::endl;
-        
-        // Try to load ground texture from assets/textures/ground.*
-        const char* groundPaths[] = {
-            "assets/textures/ground.jpg",
-            "assets/textures/ground.png",
-            "assets/textures/ground.jpeg"
-        };
-        
-        bool textureLoaded = false;
-        
-        for (const char* path : groundPaths)
-        {
-            std::filesystem::path absPath = std::filesystem::absolute(path);
-            std::cout << "[Ground] Trying: " << path << std::endl;
-            std::cout << "[Ground]   Absolute: " << absPath << std::endl;
-            std::cout << "[Ground]   Exists: " << (std::filesystem::exists(absPath) ? "YES" : "NO") << std::endl;
-            
-            int width, height, nrChannels;
-            stbi_set_flip_vertically_on_load(true); // Flip for correct orientation
-            unsigned char* data = stbi_load(path, &width, &height, &nrChannels, 0);
-            
-            if (data)
-            {
-                GLenum format = GL_RGB;
-                if (nrChannels == 1)
-                    format = GL_RED;
-                else if (nrChannels == 3)
-                    format = GL_RGB;
-                else if (nrChannels == 4)
-                    format = GL_RGBA;
-                
-                glGenTextures(1, &groundPlaneTexture);
-                glBindTexture(GL_TEXTURE_2D, groundPlaneTexture);
-                glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
-                glGenerateMipmap(GL_TEXTURE_2D);
-                
-                // CRITICAL: Proper texture parameters for ground
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                
-                stbi_image_free(data);
-                
-                std::cout << "[Ground] ? SUCCESS! Ground texture loaded" << std::endl;
-                std::cout << "[Ground]   Path: " << path << std::endl;
-                std::cout << "[Ground]   Resolution: " << width << "x" << height << std::endl;
-                std::cout << "[Ground]   Channels: " << nrChannels << " (format: ";
-                if (format == GL_RED) std::cout << "RED";
-                else if (format == GL_RGB) std::cout << "RGB";
-                else if (format == GL_RGBA) std::cout << "RGBA";
-                std::cout << ")" << std::endl;
-                std::cout << "[Ground]   Texture ID: " << groundPlaneTexture << std::endl;
-                std::cout << "[Ground]   Wrap: GL_REPEAT, Filter: MIPMAP_LINEAR" << std::endl;
-                
-                textureLoaded = true;
-                break;
-            }
-            else
-            {
-                const char* reason = stbi_failure_reason();
-                std::cout << "[Ground]   ? FAILED: " << (reason ? reason : "Unknown error") << std::endl;
-            }
-        }
-        
-        // Fallback to procedural texture if loading failed
-        if (!textureLoaded)
-        {
-            std::cout << "[Ground] WARNING: Could not load ground texture from file!" << std::endl;
-            std::cout << "[Ground] Creating procedural fallback texture..." << std::endl;
-            
-            const int texSize = 256;
-            unsigned char* texData = new unsigned char[texSize * texSize * 3];
-            
-            for (int y = 0; y < texSize; ++y)
-            {
-                for (int x = 0; x < texSize; ++x)
-                {
-                    int idx = (y * texSize + x) * 3;
-                    
-                    // Create subtle checkerboard pattern
-                    bool checker = ((x / 32) % 2) ^ ((y / 32) % 2);
-                    unsigned char baseColor = checker ? 60 : 80;
-                    
-                    texData[idx + 0] = baseColor;     // R
-                    texData[idx + 1] = baseColor;     // G
-                    texData[idx + 2] = baseColor;     // B
-                }
-            }
-            
-            glGenTextures(1, &groundPlaneTexture);
-            glBindTexture(GL_TEXTURE_2D, groundPlaneTexture);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texSize, texSize, 0, GL_RGB, GL_UNSIGNED_BYTE, texData);
-            glGenerateMipmap(GL_TEXTURE_2D);
-            
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            
-            delete[] texData;
-            
-            std::cout << "[Ground] Fallback texture created (ID: " << groundPlaneTexture << ")" << std::endl;
-        }
-    }
-    
-    if (groundPlaneVAO == 0)
-    {
-        // Generate buffers only once
-        // UVs scaled for tiling (10x10 repeat to match ground scale)
-        float planeVertices[] = {
-            // Positions          // Normals           // TexCoords (scaled for tiling)
-            -5.0f, 0.0f, -5.0f,   0.0f, 1.0f, 0.0f,   0.0f, 0.0f,
-             5.0f, 0.0f, -5.0f,   0.0f, 1.0f, 0.0f,   10.0f, 0.0f,
-             5.0f, 0.0f,  5.0f,   0.0f, 1.0f, 0.0f,   10.0f, 10.0f,
-            -5.0f, 0.0f,  5.0f,   0.0f, 1.0f, 0.0f,   0.0f, 10.0f
-        };
-
-        glGenVertexArrays(1, &groundPlaneVAO);
-        glGenBuffers(1, &groundPlaneVBO);
-        glBindVertexArray(groundPlaneVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, groundPlaneVBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(planeVertices), planeVertices, GL_STATIC_DRAW);
-
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-        glEnableVertexAttribArray(2);
-
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
-        
-        std::cout << "[Ground] Ground plane geometry initialized (10x10 UV tiling)" << std::endl;
-    }
-
-    // CRITICAL: Bind ground texture to correct unit BEFORE drawing
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, groundPlaneTexture);
-    
-    // Set model matrix and draw
-    glBindVertexArray(groundPlaneVAO);
-    glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, glm::value_ptr(model));
-    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-    glBindVertexArray(0);
-}
-
-// Process debug keys (F1-F8, B, O, V, T, G, C, K, +/-, [/])
+// Process keyboard input - Phase 6 Debug
 void processDebugKeys(GLFWwindow* window, SkyboxAtlas* skyboxAtlas)
 {
     // F1: Toggle Shadows
@@ -1151,8 +905,8 @@ void processDebugKeys(GLFWwindow* window, SkyboxAtlas* skyboxAtlas)
         bPressed = false;
     }
 
-    // D: Cycle Debug Views
-    if (glfwGetKey(window, GLFW_KEY_V) == GLFW_PRESS && !vPressed)  // Changed from D to V
+    // V: Cycle Debug Views
+    if (glfwGetKey(window, GLFW_KEY_V) == GLFW_PRESS && !vPressed)
     {
         debugViewMode = (debugViewMode + 1) % 4;
         const char* modes[] = {"Normal", "HDR Only", "Bright Pass", "Bloom Blur"};
@@ -1260,7 +1014,6 @@ void processDebugKeys(GLFWwindow* window, SkyboxAtlas* skyboxAtlas)
     // K: Toggle Skybox Mode
     if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS && !kPressed)
     {
-        // Only allow atlas mode if it's available
         if (!useSkyboxAtlas && skyboxAtlas->IsInitialized())
         {
             useSkyboxAtlas = true;
@@ -1281,51 +1034,39 @@ void processDebugKeys(GLFWwindow* window, SkyboxAtlas* skyboxAtlas)
     {
         kPressed = false;
     }
+}
 
-    // Legacy F5-F8 keys still work
-    if (glfwGetKey(window, GLFW_KEY_F5) == GLFW_PRESS && !f5Pressed)
+// E: Toggle Endless Scene
+void toggleEndlessScene(GLFWwindow* window)
+{
+    static bool ePressed = false;
+    
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS && !ePressed)
     {
-        enablePostProcessing = !enablePostProcessing;
-        std::cout << "Post-processing " << (enablePostProcessing ? "ENABLED" : "DISABLED") << std::endl;
-        f5Pressed = true;
+        enableEndlessScene = !enableEndlessScene;
+        std::cout << "Endless Scene " << (enableEndlessScene ? "ENABLED" : "DISABLED") << std::endl;
+        ePressed = true;
     }
-    else if (glfwGetKey(window, GLFW_KEY_F5) == GLFW_RELEASE)
+    else if (glfwGetKey(window, GLFW_KEY_E) == GLFW_RELEASE)
     {
-        f5Pressed = false;
+        ePressed = false;
     }
+}
 
-    if (glfwGetKey(window, GLFW_KEY_F6) == GLFW_PRESS && !f6Pressed)
+// U: Toggle Endless City
+void toggleEndlessCity(GLFWwindow* window)
+{
+    static bool uPressed = false;
+    
+    if (glfwGetKey(window, GLFW_KEY_U) == GLFW_PRESS && !uPressed)
     {
-        enableBloom = !enableBloom;
-        std::cout << "Bloom " << (enableBloom ? "ENABLED" : "DISABLED") << std::endl;
-        f6Pressed = true;
+        enableEndlessCity = !enableEndlessCity;
+        std::cout << "Endless City " << (enableEndlessCity ? "ENABLED" : "DISABLED") << std::endl;
+        uPressed = true;
     }
-    else if (glfwGetKey(window, GLFW_KEY_F6) == GLFW_RELEASE)
+    else if (glfwGetKey(window, GLFW_KEY_U) == GLFW_RELEASE)
     {
-        f6Pressed = false;
-    }
-
-    if (glfwGetKey(window, GLFW_KEY_F7) == GLFW_PRESS && !f7Pressed)
-    {
-        exposure += EXPOSURE_STEP;
-        std::cout << "Exposure: " << exposure << std::endl;
-        f7Pressed = true;
-    }
-    else if (glfwGetKey(window, GLFW_KEY_F7) == GLFW_RELEASE)
-    {
-        f7Pressed = false;
-    }
-
-    if (glfwGetKey(window, GLFW_KEY_F8) == GLFW_PRESS && !f8Pressed)
-    {
-        exposure -= EXPOSURE_STEP;
-        if (exposure < 0.1f) exposure = 0.1f;
-        std::cout << "Exposure: " << exposure << std::endl;
-        f8Pressed = true;
-    }
-    else if (glfwGetKey(window, GLFW_KEY_F8) == GLFW_RELEASE)
-    {
-        f8Pressed = false;
+        uPressed = false;
     }
 }
 
@@ -1376,3 +1117,245 @@ void processLightControls(GLFWwindow* window)
         updateLightDirection();
     }
 }
+
+// Callback for window resize
+void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+{
+    glViewport(0, 0, width, height);
+}
+
+// Mouse movement callback
+void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
+{
+    if (!g_camera) return; // Safety check
+    
+    float xpos = static_cast<float>(xposIn);
+    float ypos = static_cast<float>(yposIn);
+
+    if (firstMouse)
+    {
+        lastX = xpos;
+        lastY = ypos;
+        firstMouse = false;
+    }
+
+    float xoffset = xpos - lastX;
+    float yoffset = lastY - ypos; // Reversed since y-coordinates go from bottom to top
+
+    lastX = xpos;
+    lastY = ypos;
+
+    // Only process mouse movement if mouse is captured
+    if (mouseCaptured)
+    {
+        g_camera->ProcessMouseMovement(xoffset, yoffset);
+    }
+}
+
+// Mouse scroll callback
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
+{
+    if (!g_camera) return; // Safety check
+    
+    // Only process scroll if mouse is captured
+    if (mouseCaptured)
+    {
+        g_camera->ProcessMouseScroll(static_cast<float>(yoffset));
+    }
+}
+
+// Update FPS counter
+void updateFPS(GLFWwindow* window)
+{
+    double currentTime = glfwGetTime();
+    frameCount++;
+    
+    if (currentTime - lastTime >= 1.0)
+    {
+        currentFPS = frameCount;
+        frameCount = 0;
+        lastTime = currentTime;
+    }
+}
+
+// Render fullscreen quad
+void renderQuad()
+{
+    static unsigned int quadVAO = 0;
+    static unsigned int quadVBO;
+    
+    if (quadVAO == 0)
+    {
+        float quadVertices[] = {
+            // positions        // texture Coords
+            -1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
+            -1.0f, -1.0f, 0.0f, 0.0f, 0.0f,
+             1.0f,  1.0f, 0.0f, 1.0f, 1.0f,
+             1.0f, -1.0f, 0.0f, 1.0f, 0.0f,
+        };
+        
+        glGenVertexArrays(1, &quadVAO);
+        glGenBuffers(1, &quadVBO);
+        glBindVertexArray(quadVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), &quadVertices, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+    }
+    glBindVertexArray(quadVAO);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindVertexArray(0);
+}
+
+// Render ground plane
+void renderGroundPlane(unsigned int shader, const glm::mat4& model)
+{
+    if (groundPlaneVAO == 0)
+    {
+        float planeVertices[] = {
+            // positions            // normals              // texcoords
+             25.0f, 0.0f,  25.0f,  0.0f, 1.0f, 0.0f,  25.0f,  0.0f,
+            -25.0f, 0.0f,  25.0f,  0.0f, 1.0f, 0.0f,   0.0f,  0.0f,
+            -25.0f, 0.0f, -25.0f,  0.0f, 1.0f, 0.0f,   0.0f, 25.0f,
+            
+             25.0f, 0.0f,  25.0f,  0.0f, 1.0f, 0.0f,  25.0f,  0.0f,
+            -25.0f, 0.0f, -25.0f,  0.0f, 1.0f, 0.0f,   0.0f, 25.0f,
+             25.0f, 0.0f, -25.0f,  0.0f, 1.0f, 0.0f,  25.0f, 25.0f
+        };
+        
+        glGenVertexArrays(1, &groundPlaneVAO);
+        glGenBuffers(1, &groundPlaneVBO);
+        glBindVertexArray(groundPlaneVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, groundPlaneVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(planeVertices), planeVertices, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+        glBindVertexArray(0);
+    }
+    
+    // Bind ground texture if available
+    if (groundPlaneTexture != 0) {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, groundPlaneTexture);
+        glUniform1i(glGetUniformLocation(shader, "texture_diffuse1"), 0);
+    }
+    
+    glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, glm::value_ptr(model));
+    glBindVertexArray(groundPlaneVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+}
+
+// Load and compile shaders
+std::string loadShaderFromFile(const char* filePath)
+{
+    std::string shaderCode;
+    std::ifstream shaderFile;
+    shaderFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+    try {
+        shaderFile.open(filePath);
+        std::stringstream shaderStream;
+        shaderStream << shaderFile.rdbuf();
+        shaderFile.close();
+        shaderCode = shaderStream.str();
+    }
+    catch (std::ifstream::failure& e) {
+        std::cerr << "ERROR: Shader file not successfully read: " << filePath << std::endl;
+    }
+    return shaderCode;
+}
+
+unsigned int compileShader(unsigned int type, const char* source)
+{
+    unsigned int shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, NULL);
+    glCompileShader(shader);
+    
+    int success;
+    char infoLog[512];
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(shader, 512, NULL, infoLog);
+        std::cerr << "ERROR: Shader compilation failed\n" << infoLog << std::endl;
+    }
+    return shader;
+}
+
+unsigned int createShaderProgram(const char* vertexPath, const char* fragmentPath)
+{
+    std::string vertexCode = loadShaderFromFile(vertexPath);
+    std::string fragmentCode = loadShaderFromFile(fragmentPath);
+    
+    const char* vShaderCode = vertexCode.c_str();
+    const char* fShaderCode = fragmentCode.c_str();
+    
+    unsigned int vertex = compileShader(GL_VERTEX_SHADER, vShaderCode);
+    unsigned int fragment = compileShader(GL_FRAGMENT_SHADER, fShaderCode);
+    
+    unsigned int program = glCreateProgram();
+    glAttachShader(program, vertex);
+    glAttachShader(program, fragment);
+    glLinkProgram(program);
+    
+    int success;
+    char infoLog[512];
+    glGetProgramiv(program, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(program, 512, NULL, infoLog);
+        std::cerr << "ERROR: Shader program linking failed\n" << infoLog << std::endl;
+    }
+    
+    glDeleteShader(vertex);
+    glDeleteShader(fragment);
+    
+    return program;
+}
+
+// Load ground texture
+unsigned int loadGroundTexture(const char* path)
+{
+    unsigned int textureID = 0;
+    glGenTextures(1, &textureID);
+    
+    int width, height, nrChannels;
+    stbi_set_flip_vertically_on_load(true);
+    unsigned char* data = stbi_load(path, &width, &height, &nrChannels, 0);
+    
+    if (data)
+    {
+        GLenum format = GL_RGB;
+        if (nrChannels == 1)
+            format = GL_RED;
+        else if (nrChannels == 3)
+            format = GL_RGB;
+        else if (nrChannels == 4)
+            format = GL_RGBA;
+
+        glBindTexture(GL_TEXTURE_2D, textureID);
+        glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        stbi_image_free(data);
+        std::cout << "[OK] Loaded ground texture: " << path << " (" << width << "x" << height << ")" << std::endl;
+    }
+    else
+    {
+        std::cout << "[WARN] Failed to load texture: " << path << std::endl;
+        glDeleteTextures(1, &textureID);
+        textureID = 0;
+    }
+    
+    return textureID;
+}
+

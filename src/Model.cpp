@@ -46,6 +46,12 @@ void Model::Draw(unsigned int shaderProgram)
         meshes[i].Draw(shaderProgram);
 }
 
+void Model::DrawInstanced(unsigned int shaderProgram, int instanceCount)
+{
+    for (unsigned int i = 0; i < meshes.size(); i++)
+        meshes[i].DrawInstanced(shaderProgram, instanceCount);
+}
+
 void Model::Delete()
 {
     for (auto& mesh : meshes)

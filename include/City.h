@@ -22,6 +22,9 @@ public:
     void SetEnabled(bool enable) { enabled = enable; }
     void ToggleEnabled() { enabled = !enabled; }
     
+    // Phase 7: Get building transforms for navigation
+    std::vector<glm::mat4> GetBuildingTransforms() const;
+    
 private:
     std::vector<Building> buildings;
     std::vector<unsigned int> buildingTextures;

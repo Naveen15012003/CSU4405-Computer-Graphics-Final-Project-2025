@@ -22,6 +22,9 @@ public:
     // Draw the model
     void Draw(unsigned int shaderProgram);
 
+    // Draw the model with instancing
+    void DrawInstanced(unsigned int shaderProgram, int instanceCount);
+
     // Cleanup
     void Delete();
 

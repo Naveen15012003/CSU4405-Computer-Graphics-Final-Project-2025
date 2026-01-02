@@ -26,6 +26,9 @@ public:
     // Render the mesh
     void Draw(unsigned int shaderProgram);
 
+    // Render the mesh with instancing
+    void DrawInstanced(unsigned int shaderProgram, int instanceCount);
+
     // Cleanup
     void Delete();
 

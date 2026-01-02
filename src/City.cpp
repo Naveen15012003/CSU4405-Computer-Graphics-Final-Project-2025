@@ -343,3 +343,13 @@ void City::Cleanup()
         initialized = false;
     }
 }
+
+// Phase 7: Get building transforms for navigation
+std::vector<glm::mat4> City::GetBuildingTransforms() const {
+    std::vector<glm::mat4> transforms;
+    transforms.reserve(buildings.size());
+    for (const auto& building : buildings) {
+        transforms.push_back(building.GetModelMatrix());
+    }
+    return transforms;
+}

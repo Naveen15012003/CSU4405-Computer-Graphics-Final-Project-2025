@@ -65,6 +65,33 @@ void Mesh::Draw(unsigned int shaderProgram)
     glActiveTexture(GL_TEXTURE0);
 }
 
+void Mesh::DrawInstanced(unsigned int shaderProgram, int instanceCount)
+{
+    // Bind textures
+    unsigned int diffuseNr = 1;
+    for (unsigned int i = 0; i < textures.size(); i++)
+    {
+        glActiveTexture(GL_TEXTURE0 + i);
+
+        // Set uniform
+        std::string number;
+        std::string name = textures[i].Type;
+        if (name == "diffuse")
+            number = std::to_string(diffuseNr++);
+
+        glUniform1i(glGetUniformLocation(shaderProgram, ("material." + name + number).c_str()), i);
+        textures[i].Bind(i);
+    }
+
+    // Draw mesh with instancing
+    glBindVertexArray(VAO);
+    glDrawElementsInstanced(GL_TRIANGLES, static_cast<unsigned int>(indices.size()), GL_UNSIGNED_INT, 0, instanceCount);
+    glBindVertexArray(0);
+
+    // Reset to defaults
+    glActiveTexture(GL_TEXTURE0);
+}
+
 void Mesh::Delete()
 {
     glDeleteVertexArrays(1, &VAO);
