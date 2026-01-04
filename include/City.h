@@ -13,7 +13,8 @@ public:
     void Initialize(unsigned int buildingShader);
     void Generate(int seed = 42);
     void Render(const glm::mat4& view, const glm::mat4& projection, 
-                const glm::mat4& lightSpaceMatrix, const glm::vec3& cameraPos);
+                const glm::mat4& lightSpaceMatrix, const glm::vec3& cameraPos,
+                unsigned int overrideShader = 0);  // NEW: Optional shader override for CSM
     void RenderShadow(const glm::mat4& lightSpaceMatrix, unsigned int shadowShader);
     void UpdateChunks(const glm::vec3& cameraPos);
     void Cleanup();

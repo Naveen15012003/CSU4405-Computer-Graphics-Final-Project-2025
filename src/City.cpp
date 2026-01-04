@@ -250,26 +250,29 @@ void City::UpdateChunks(const glm::vec3& cameraPos)
 }
 
 void City::Render(const glm::mat4& view, const glm::mat4& projection, 
-                  const glm::mat4& lightSpaceMatrix, const glm::vec3& cameraPos)
+                  const glm::mat4& lightSpaceMatrix, const glm::vec3& cameraPos,
+                  unsigned int overrideShader)
 {
     if (!enabled || !initialized || buildings.empty()) return;
     
-    glUseProgram(shaderProgram);
+    // Use override shader if provided, otherwise use default
+    unsigned int activeShader = (overrideShader != 0) ? overrideShader : shaderProgram;
+    glUseProgram(activeShader);
     
     // Set matrices
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
+    glUniformMatrix4fv(glGetUniformLocation(activeShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(glGetUniformLocation(activeShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+    glUniformMatrix4fv(glGetUniformLocation(activeShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
     
     // Render each building
     for (const auto& building : buildings)
     {
         // Set model matrix
         glm::mat4 model = building.GetModelMatrix();
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+        glUniformMatrix4fv(glGetUniformLocation(activeShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
         
         // FIXED: Pass building scale for UV tiling (prevents stretching)
-        glUniform3fv(glGetUniformLocation(shaderProgram, "buildingScale"), 1, glm::value_ptr(building.scale));
+        glUniform3fv(glGetUniformLocation(activeShader, "buildingScale"), 1, glm::value_ptr(building.scale));
         
         // CRITICAL: Bind building texture to correct unit
         glActiveTexture(GL_TEXTURE0);
@@ -298,7 +301,7 @@ void City::Render(const glm::mat4& view, const glm::mat4& projection,
             }
         }
         
-        glUniform1i(glGetUniformLocation(shaderProgram, "buildingTexture"), 0);
+        glUniform1i(glGetUniformLocation(activeShader, "buildingTexture"), 0);
         
         // Render cube geometry
         Building::RenderGeometry();

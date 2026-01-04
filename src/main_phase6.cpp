@@ -31,6 +31,9 @@
 // Phase 10 includes
 #include "ParticleSystem.h"
 
+// Phase 11 includes - Cascaded Shadow Maps (Hard Feature)
+#include "CascadedShadowMap.h"
+
 // Window dimensions
 const unsigned int SCR_WIDTH = 1920;
 const unsigned int SCR_HEIGHT = 1080;
@@ -86,6 +89,13 @@ int currentParticleType = 0;  // 0=fire, 1=smoke, 2=spark, 3=magic
 bool xPressed = false;   // Toggle particles
 bool zPressed = false;   // Change particle type
 bool f10Pressed = false; // Burst particles
+
+// Phase 11: Cascaded Shadow Maps (Hard Feature)
+bool enableCSM = false;  // Start disabled for testing
+bool visualizeCSMCascades = false;
+float csmSplitLambda = 0.5f;  // 0=linear, 1=logarithmic
+bool f11Pressed = false;  // Toggle CSM
+bool f12Pressed = false;  // Toggle cascade visualization
 
 // Phase 6 additions
 bool enableCity = true;
@@ -151,6 +161,11 @@ SkinnedCharacter* character = nullptr;
 // Phase 10: Particle system
 ParticleSystem* particleSystem = nullptr;
 
+// Phase 11: Cascaded Shadow Maps
+CascadedShadowMap* csmShadowMap = nullptr;
+unsigned int modelCSMShader = 0;  // CSM-enabled model shader
+unsigned int buildingCSMShader = 0;  // CSM-enabled building shader
+
  // Function prototypes
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
@@ -163,6 +178,7 @@ void processLightControls(GLFWwindow* window);
 void processCharacterControls(GLFWwindow* window);  // NEW: Character controls
 void processDoFControls(GLFWwindow* window);  // NEW: DoF controls
 void processParticleControls(GLFWwindow* window);  // NEW: Particle controls
+void processCSMControls(GLFWwindow* window);  // NEW: CSM controls
 std::string loadShaderFromFile(const char* filePath);
 unsigned int compileShader(unsigned int type, const char* source);
 unsigned int createShaderProgram(const char* vertexPath, const char* fragmentPath);
@@ -253,6 +269,10 @@ int main()
     std::cout << "  X    - Toggle Particles ON/OFF" << std::endl;
     std::cout << "  Z    - Cycle Particle Type (Fire/Smoke/Spark/Magic)" << std::endl;
     std::cout << "  F10  - Burst Particles" << std::endl;
+    std::cout << "\n  PHASE 11 (CASCADED SHADOW MAPS - HARD):" << std::endl;
+    std::cout << "  F11  - Toggle CSM ON/OFF" << std::endl;
+    std::cout << "  F12  - Toggle Cascade Visualization" << std::endl;
+    std::cout << "  </> - Adjust Split Lambda (linear/logarithmic)" << std::endl;
     std::cout << "\n  SHADOWS:" << std::endl;
     std::cout << "  F1 - Toggle shadows" << std::endl;
     std::cout << "  F2 - Toggle PCF (soft shadows)" << std::endl;
@@ -442,6 +462,37 @@ int main()
     }
     std::cout << "==========================================\n" << std::endl;
 
+    // Phase 11: Initialize Cascaded Shadow Maps
+    std::cout << "\n=== Phase 11: Cascaded Shadow Maps (Hard) ===" << std::endl;
+    csmShadowMap = new CascadedShadowMap(2048);
+    if (csmShadowMap->Initialize()) {
+        csmShadowMap->SetSplitLambda(csmSplitLambda);
+        std::cout << "[OK] Cascaded Shadow Maps initialized" << std::endl;
+        
+        // Load CSM-enabled model shader (with dedicated CSM vertex shader)
+        modelCSMShader = createShaderProgram("shaders/model_csm.vert", "shaders/model_csm.frag");
+        if (modelCSMShader != 0) {
+            std::cout << "[OK] CSM model shader loaded" << std::endl;
+        } else {
+            std::cerr << "[WARN] Failed to load CSM model shader, falling back to standard shadows" << std::endl;
+            enableCSM = false;
+        }
+        
+        // Load CSM-enabled building shader
+        buildingCSMShader = createShaderProgram("shaders/building_csm.vert", "shaders/building_csm.frag");
+        if (buildingCSMShader != 0) {
+            std::cout << "[OK] CSM building shader loaded" << std::endl;
+        } else {
+            std::cerr << "[WARN] Failed to load CSM building shader" << std::endl;
+        }
+    } else {
+        std::cerr << "[ERROR] Failed to initialize CSM" << std::endl;
+        delete csmShadowMap;
+        csmShadowMap = nullptr;
+        enableCSM = false;
+    }
+    std::cout << "=============================================\n" << std::endl;
+
     // Load skybox
     std::cout << "Loading skybox..." << std::endl;
     Skybox* skybox = nullptr;
@@ -541,6 +592,7 @@ int main()
         processCharacterControls(window);  // NEW: Character controls
         processDoFControls(window);  // NEW: DoF controls
         processParticleControls(window);  // NEW: Particle controls
+        processCSMControls(window);  // NEW: CSM controls
 
         // Update FPS
         updateFPS(window);
@@ -552,73 +604,149 @@ int main()
         }
 
         // === PASS 1: SHADOW MAP (DEPTH PASS) ===
-        float near_plane = 0.5f, far_plane = 50.0f;
-        glm::mat4 lightProjection = glm::ortho(-50.0f, 50.0f, -50.0f, 50.0f, near_plane, far_plane);
-        glm::mat4 lightView = glm::lookAt(
-            -lightDirection * 25.0f,
-            glm::vec3(0.0f, 0.0f, 0.0f),
-            glm::vec3(0.0f, 1.0f, 0.0f)
-        );
-        glm::mat4 lightSpaceMatrix = lightProjection * lightView;
-
-        // Render scene to shadow map
-        shadowMap->BindForWriting();
-        glCullFace(GL_FRONT);
-        glUseProgram(shadowShader);
-        glUniformMatrix4fv(glGetUniformLocation(shadowShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
-
-        // Render ground plane
+        float near_plane = 0.1f, far_plane = 100.0f;
+        
+        // Define model matrices (shared between shadow and main passes)
         glm::mat4 groundModel = glm::mat4(1.0f);
         groundModel = glm::scale(groundModel, glm::vec3(10.0f, 1.0f, 10.0f));
-        renderGroundPlane(shadowShader, groundModel);
-
-        // Render main animated cube (center)
+        
         glm::mat4 cubeModel = glm::mat4(1.0f);
         cubeModel = glm::translate(cubeModel, glm::vec3(0.0f, 1.5f, 0.0f));
         cubeModel = glm::rotate(cubeModel, cubeRotationAngle, glm::vec3(0.0f, 1.0f, 0.0f));
-        glUniformMatrix4fv(glGetUniformLocation(shadowShader, "model"), 1, GL_FALSE, glm::value_ptr(cubeModel));
-        model->Draw(shadowShader);
-
-        // Cube 2 (left)
+        
         glm::mat4 cube2Model = glm::mat4(1.0f);
         cube2Model = glm::translate(cube2Model, glm::vec3(-3.0f, 1.0f, -2.0f));
         cube2Model = glm::rotate(cube2Model, cubeRotationAngle * 0.5f, glm::vec3(1.0f, 0.5f, 0.0f));
         cube2Model = glm::scale(cube2Model, glm::vec3(0.8f));
-        glUniformMatrix4fv(glGetUniformLocation(shadowShader, "model"), 1, GL_FALSE, glm::value_ptr(cube2Model));
-        model->Draw(shadowShader);
-
-        // Cube 3 (right)
+        
         glm::mat4 cube3Model = glm::mat4(1.0f);
         cube3Model = glm::translate(cube3Model, glm::vec3(3.0f, 0.8f, 1.0f));
         cube3Model = glm::rotate(cube3Model, cubeRotationAngle * -0.7f, glm::vec3(0.0f, 1.0f, 1.0f));
         cube3Model = glm::scale(cube3Model, glm::vec3(0.6f));
-        glUniformMatrix4fv(glGetUniformLocation(shadowShader, "model"), 1, GL_FALSE, glm::value_ptr(cube3Model));
-        model->Draw(shadowShader);
+        
+        // Update CSM cascades if enabled
+        if (csmShadowMap && enableCSM) {
+            glm::mat4 projection = camera.GetProjectionMatrix((float)SCR_WIDTH / (float)SCR_HEIGHT);
+            glm::mat4 viewMat = camera.GetViewMatrix();
+            csmShadowMap->UpdateCascades(viewMat, projection, lightDirection, near_plane, far_plane);
+            
+            // CRITICAL: Enable depth test and set proper state for shadow rendering
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LESS);
+            glDepthMask(GL_TRUE);
+            
+            // Render to each cascade
+            glCullFace(GL_FRONT);
+            glUseProgram(shadowShader);
+            
+            for (int i = 0; i < NUM_CASCADES; i++) {
+                csmShadowMap->BindForWriting(i);
+                
+                // Ensure depth is cleared and writable
+                glClear(GL_DEPTH_BUFFER_BIT);
+                
+                glm::mat4 cascadeLightSpaceMatrix = csmShadowMap->GetCascade(i).lightSpaceMatrix;
+                glUniformMatrix4fv(glGetUniformLocation(shadowShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(cascadeLightSpaceMatrix));
+                
+                // Render ground plane
+                renderGroundPlane(shadowShader, groundModel);
+                
+                // Render main animated cube (center)
+                glUniformMatrix4fv(glGetUniformLocation(shadowShader, "model"), 1, GL_FALSE, glm::value_ptr(cubeModel));
+                model->Draw(shadowShader);
+                
+                // Cube 2 (left)
+                glUniformMatrix4fv(glGetUniformLocation(shadowShader, "model"), 1, GL_FALSE, glm::value_ptr(cube2Model));
+                model->Draw(shadowShader);
+                
+                // Cube 3 (right)
+                glUniformMatrix4fv(glGetUniformLocation(shadowShader, "model"), 1, GL_FALSE, glm::value_ptr(cube3Model));
+                model->Draw(shadowShader);
+                
+                // Phase 6: Render city buildings in shadow pass
+                if (enableCity) {
+                    city.RenderShadow(cascadeLightSpaceMatrix, shadowShader);
+                }
+                
+                // Phase 7: Render character in shadow pass
+                if (character && enableCharacter) {
+                    character->renderDepth(cascadeLightSpaceMatrix);
+                }
+            }
+            csmShadowMap->Unbind();
+            glCullFace(GL_BACK);
+        } else {
+            // Legacy single shadow map
+            glm::mat4 lightProjection = glm::ortho(-50.0f, 50.0f, -50.0f, 50.0f, near_plane, far_plane);
+            glm::mat4 lightView = glm::lookAt(
+                -lightDirection * 25.0f,
+                glm::vec3(0.0f, 0.0f, 0.0f),
+                glm::vec3(0.0f, 1.0f, 0.0f)
+            );
+            glm::mat4 lightSpaceMatrix = lightProjection * lightView;
 
-        // Phase 6: Render city buildings in shadow pass
-        if (enableCity)
-        {
-            city.RenderShadow(lightSpaceMatrix, shadowShader);
+            // Render scene to shadow map
+            shadowMap->BindForWriting();
+            glCullFace(GL_FRONT);
+            glUseProgram(shadowShader);
+            glUniformMatrix4fv(glGetUniformLocation(shadowShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
+
+            // Render ground plane
+            renderGroundPlane(shadowShader, groundModel);
+
+            // Render main animated cube (center)
+            glUniformMatrix4fv(glGetUniformLocation(shadowShader, "model"), 1, GL_FALSE, glm::value_ptr(cubeModel));
+            model->Draw(shadowShader);
+
+            // Cube 2 (left)
+            glUniformMatrix4fv(glGetUniformLocation(shadowShader, "model"), 1, GL_FALSE, glm::value_ptr(cube2Model));
+            model->Draw(shadowShader);
+
+            // Cube 3 (right)
+            glUniformMatrix4fv(glGetUniformLocation(shadowShader, "model"), 1, GL_FALSE, glm::value_ptr(cube3Model));
+            model->Draw(shadowShader);
+
+            // Phase 6: Render city buildings in shadow pass
+            if (enableCity) {
+                city.RenderShadow(lightSpaceMatrix, shadowShader);
+            }
+
+            // Phase 7: Render character in shadow pass
+            if (character && enableCharacter) {
+                character->renderDepth(lightSpaceMatrix);
+            }
+
+            shadowMap->Unbind();
+            glCullFace(GL_BACK);
         }
-
-        // Phase 7: Render character in shadow pass
-        if (character && enableCharacter)
-        {
-            character->renderDepth(lightSpaceMatrix);
+        
+        // CRITICAL FIX: Always restore framebuffer and viewport AFTER shadow pass
+        // This ensures consistent state whether CSM is ON or OFF
+        if (usePostProcessing) {
+            postProcessor.BeginRender();  // Re-bind the HDR framebuffer
+        } else {
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
-
-        shadowMap->Unbind();
-        glCullFace(GL_BACK);
+        
+        // Always reset viewport and clear after shadow pass
+        glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+        glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        
+        // Get light space matrix for legacy compatibility
+        glm::mat4 lightSpaceMatrix;
+        if (csmShadowMap && enableCSM) {
+            lightSpaceMatrix = csmShadowMap->GetCascade(0).lightSpaceMatrix;
+        } else {
+            glm::mat4 lightProjection = glm::ortho(-50.0f, 50.0f, -50.0f, 50.0f, near_plane, far_plane);
+            glm::mat4 lightView = glm::lookAt(-lightDirection * 25.0f, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            lightSpaceMatrix = lightProjection * lightView;
+        }
 
         // === PASS 2: MAIN RENDER OR DEBUG VIEW ===
-        
-        if (!usePostProcessing) {
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
-            glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            glEnable(GL_DEPTH_TEST);
-        }
+        // Note: Framebuffer and viewport already set above after shadow pass
 
         if (showDepthMap)
         {
@@ -663,72 +791,148 @@ int main()
             }
 
             // Render scene with lighting and shadows
-            glUseProgram(modelShader);
+            unsigned int activeModelShader = (enableCSM && modelCSMShader != 0) ? modelCSMShader : modelShader;
+            glUseProgram(activeModelShader);
 
-            glUniformMatrix4fv(glGetUniformLocation(modelShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-            glUniformMatrix4fv(glGetUniformLocation(modelShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
-            glUniformMatrix4fv(glGetUniformLocation(modelShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
+            glUniformMatrix4fv(glGetUniformLocation(activeModelShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+            glUniformMatrix4fv(glGetUniformLocation(activeModelShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(glGetUniformLocation(activeModelShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
 
-            glUniform3fv(glGetUniformLocation(modelShader, "dirLightDir"), 1, glm::value_ptr(lightDirection));
-            glUniform3fv(glGetUniformLocation(modelShader, "dirLightColor"), 1, glm::value_ptr(dirLightColor));
+            glUniform3fv(glGetUniformLocation(activeModelShader, "dirLightDir"), 1, glm::value_ptr(lightDirection));
+            glUniform3fv(glGetUniformLocation(activeModelShader, "dirLightColor"), 1, glm::value_ptr(dirLightColor));
             
-            glUniform3fv(glGetUniformLocation(modelShader, "pointLightPos"), 1, glm::value_ptr(pointLightPos));
-            glUniform3fv(glGetUniformLocation(modelShader, "pointLightColor"), 1, glm::value_ptr(pointLightColor));
-            glUniform1f(glGetUniformLocation(modelShader, "pointLightConstant"), 1.0f);
-            glUniform1f(glGetUniformLocation(modelShader, "pointLightLinear"), 0.09f);
-            glUniform1f(glGetUniformLocation(modelShader, "pointLightQuadratic"), 0.032f);
+            glUniform3fv(glGetUniformLocation(activeModelShader, "pointLightPos"), 1, glm::value_ptr(pointLightPos));
+            glUniform3fv(glGetUniformLocation(activeModelShader, "pointLightColor"), 1, glm::value_ptr(pointLightColor));
+            glUniform1f(glGetUniformLocation(activeModelShader, "pointLightConstant"), 1.0f);
+            glUniform1f(glGetUniformLocation(activeModelShader, "pointLightLinear"), 0.09f);
+            glUniform1f(glGetUniformLocation(activeModelShader, "pointLightQuadratic"), 0.032f);
 
-            glUniform3fv(glGetUniformLocation(modelShader, "viewPos"), 1, glm::value_ptr(camera.Position));
+            glUniform3fv(glGetUniformLocation(activeModelShader, "viewPos"), 1, glm::value_ptr(camera.Position));
 
-            shadowMap->BindForReading(GL_TEXTURE1);
-            glUniform1i(glGetUniformLocation(modelShader, "shadowMap"), 1);
+            // CSM uniforms
+            if (enableCSM && csmShadowMap && modelCSMShader != 0) {
+                glUniform1i(glGetUniformLocation(activeModelShader, "enableCSM"), GL_TRUE);
+                glUniform1i(glGetUniformLocation(activeModelShader, "visualizeCascades"), visualizeCSMCascades ? GL_TRUE : GL_FALSE);
+                glUniform1i(glGetUniformLocation(activeModelShader, "numCascades"), NUM_CASCADES);
+                
+                // IMPORTANT: Pass view matrix for cascade selection
+                glUniformMatrix4fv(glGetUniformLocation(activeModelShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
+                
+                // Upload light space matrices
+                glm::mat4 lightMatrices[NUM_CASCADES];
+                csmShadowMap->GetLightSpaceMatrices(lightMatrices);
+                for (int i = 0; i < NUM_CASCADES; i++) {
+                    std::string uniformName = "lightSpaceMatrices[" + std::to_string(i) + "]";
+                    glUniformMatrix4fv(glGetUniformLocation(activeModelShader, uniformName.c_str()), 1, GL_FALSE, glm::value_ptr(lightMatrices[i]));
+                }
+                
+                // Upload cascade splits
+                float splits[NUM_CASCADES];
+                csmShadowMap->GetCascadeSplits(splits);
+                for (int i = 0; i < NUM_CASCADES; i++) {
+                    std::string uniformName = "cascadeSplits[" + std::to_string(i) + "]";
+                    glUniform1f(glGetUniformLocation(activeModelShader, uniformName.c_str()), splits[i]);
+                }
+                
+                // Bind CSM shadow map array to texture unit 2
+                glActiveTexture(GL_TEXTURE2);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, csmShadowMap->GetDepthTextureArray());
+                glUniform1i(glGetUniformLocation(activeModelShader, "csmShadowMap"), 2);
+            } else {
+                glUniform1i(glGetUniformLocation(activeModelShader, "enableCSM"), GL_FALSE);
+                glUniform1i(glGetUniformLocation(activeModelShader, "numCascades"), 0);
+            }
 
-            glUniform1i(glGetUniformLocation(modelShader, "enableShadows"), enableShadows);
-            glUniform1i(glGetUniformLocation(modelShader, "uUsePCF"), enablePCF);
-            glUniform1i(glGetUniformLocation(modelShader, "enableGammaCorrection"), enableGammaCorrection);
-            glUniform1f(glGetUniformLocation(modelShader, "material.shininess"), 32.0f);
-            glUniform1f(glGetUniformLocation(modelShader, "bloomThreshold"), bloomThreshold);
+            // Bind legacy shadow map to texture unit 1
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, shadowMap->GetDepthTexture());
+            glUniform1i(glGetUniformLocation(activeModelShader, "shadowMap"), 1);
+
+            glUniform1i(glGetUniformLocation(activeModelShader, "enableShadows"), enableShadows);
+            glUniform1i(glGetUniformLocation(activeModelShader, "uUsePCF"), enablePCF);
+            glUniform1i(glGetUniformLocation(activeModelShader, "enableGammaCorrection"), enableGammaCorrection);
+            glUniform1f(glGetUniformLocation(activeModelShader, "material.shininess"), 32.0f);
+            glUniform1f(glGetUniformLocation(activeModelShader, "bloomThreshold"), bloomThreshold);
+
+            // Reset to texture unit 0 for diffuse textures
+            glActiveTexture(GL_TEXTURE0);
 
             // Render ground plane
-            renderGroundPlane(modelShader, groundModel);
+            renderGroundPlane(activeModelShader, groundModel);
 
             // Render main animated cube (center)
-            glUniformMatrix4fv(glGetUniformLocation(modelShader, "model"), 1, GL_FALSE, glm::value_ptr(cubeModel));
-            model->Draw(modelShader);
+            glUniformMatrix4fv(glGetUniformLocation(activeModelShader, "model"), 1, GL_FALSE, glm::value_ptr(cubeModel));
+            model->Draw(activeModelShader);
 
             // Render extra cubes
-            glUniformMatrix4fv(glGetUniformLocation(modelShader, "model"), 1, GL_FALSE, glm::value_ptr(cube2Model));
-            model->Draw(modelShader);
+            glUniformMatrix4fv(glGetUniformLocation(activeModelShader, "model"), 1, GL_FALSE, glm::value_ptr(cube2Model));
+            model->Draw(activeModelShader);
             
-            glUniformMatrix4fv(glGetUniformLocation(modelShader, "model"), 1, GL_FALSE, glm::value_ptr(cube3Model));
-            model->Draw(modelShader);
+            glUniformMatrix4fv(glGetUniformLocation(activeModelShader, "model"), 1, GL_FALSE, glm::value_ptr(cube3Model));
+            model->Draw(activeModelShader);
             
             // Phase 6: Render city
             if (enableCity)
             {
-                glUseProgram(buildingShader);
+                // Choose shader based on CSM state
+                unsigned int activeBuildingShader = (enableCSM && buildingCSMShader != 0) ? buildingCSMShader : buildingShader;
+                glUseProgram(activeBuildingShader);
                 
-                glUniformMatrix4fv(glGetUniformLocation(buildingShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-                glUniformMatrix4fv(glGetUniformLocation(buildingShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
-                glUniformMatrix4fv(glGetUniformLocation(buildingShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
+                glUniformMatrix4fv(glGetUniformLocation(activeBuildingShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+                glUniformMatrix4fv(glGetUniformLocation(activeBuildingShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
+                glUniformMatrix4fv(glGetUniformLocation(activeBuildingShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
                 
-                glUniform3fv(glGetUniformLocation(buildingShader, "dirLightDir"), 1, glm::value_ptr(lightDirection));
-                glUniform3fv(glGetUniformLocation(buildingShader, "dirLightColor"), 1, glm::value_ptr(dirLightColor));
-                glUniform3fv(glGetUniformLocation(buildingShader, "pointLightPos"), 1, glm::value_ptr(pointLightPos));
-                glUniform3fv(glGetUniformLocation(buildingShader, "pointLightColor"), 1, glm::value_ptr(pointLightColor));
-                glUniform1f(glGetUniformLocation(buildingShader, "pointLightConstant"), 1.0f);
-                glUniform1f(glGetUniformLocation(buildingShader, "pointLightLinear"), 0.09f);
-                glUniform1f(glGetUniformLocation(buildingShader, "pointLightQuadratic"), 0.032f);
+                glUniform3fv(glGetUniformLocation(activeBuildingShader, "dirLightDir"), 1, glm::value_ptr(lightDirection));
+                glUniform3fv(glGetUniformLocation(activeBuildingShader, "dirLightColor"), 1, glm::value_ptr(dirLightColor));
+                glUniform3fv(glGetUniformLocation(activeBuildingShader, "pointLightPos"), 1, glm::value_ptr(pointLightPos));
+                glUniform3fv(glGetUniformLocation(activeBuildingShader, "pointLightColor"), 1, glm::value_ptr(pointLightColor));
+                glUniform1f(glGetUniformLocation(activeBuildingShader, "pointLightConstant"), 1.0f);
+                glUniform1f(glGetUniformLocation(activeBuildingShader, "pointLightLinear"), 0.09f);
+                glUniform1f(glGetUniformLocation(activeBuildingShader, "pointLightQuadratic"), 0.032f);
                 
-                glUniform3fv(glGetUniformLocation(buildingShader, "viewPos"), 1, glm::value_ptr(camera.Position));
+                glUniform3fv(glGetUniformLocation(activeBuildingShader, "viewPos"), 1, glm::value_ptr(camera.Position));
+                
+                // CSM uniforms for building shader
+                if (enableCSM && csmShadowMap && buildingCSMShader != 0) {
+                    glUniform1i(glGetUniformLocation(activeBuildingShader, "enableCSM"), GL_TRUE);
+                    glUniform1i(glGetUniformLocation(activeBuildingShader, "visualizeCascades"), visualizeCSMCascades ? GL_TRUE : GL_FALSE);
+                    glUniform1i(glGetUniformLocation(activeBuildingShader, "numCascades"), NUM_CASCADES);
+                    
+                    // Upload light space matrices
+                    glm::mat4 lightMatrices[NUM_CASCADES];
+                    csmShadowMap->GetLightSpaceMatrices(lightMatrices);
+                    for (int i = 0; i < NUM_CASCADES; i++) {
+                        std::string uniformName = "lightSpaceMatrices[" + std::to_string(i) + "]";
+                        glUniformMatrix4fv(glGetUniformLocation(activeBuildingShader, uniformName.c_str()), 1, GL_FALSE, glm::value_ptr(lightMatrices[i]));
+                    }
+                    
+                    // Upload cascade splits
+                    float splits[NUM_CASCADES];
+                    csmShadowMap->GetCascadeSplits(splits);
+                    for (int i = 0; i < NUM_CASCADES; i++) {
+                        std::string uniformName = "cascadeSplits[" + std::to_string(i) + "]";
+                        glUniform1f(glGetUniformLocation(activeBuildingShader, uniformName.c_str()), splits[i]);
+                    }
+                    
+                    // Bind CSM shadow map array to texture unit 2
+                    glActiveTexture(GL_TEXTURE2);
+                    glBindTexture(GL_TEXTURE_2D_ARRAY, csmShadowMap->GetDepthTextureArray());
+                    glUniform1i(glGetUniformLocation(activeBuildingShader, "csmShadowMap"), 2);
+                } else {
+                    glUniform1i(glGetUniformLocation(activeBuildingShader, "enableCSM"), GL_FALSE);
+                    glUniform1i(glGetUniformLocation(activeBuildingShader, "numCascades"), 0);
+                }
+                
+                // Bind legacy shadow map
                 shadowMap->BindForReading(GL_TEXTURE1);
-                glUniform1i(glGetUniformLocation(buildingShader, "shadowMap"), 1);
+                glUniform1i(glGetUniformLocation(activeBuildingShader, "shadowMap"), 1);
                 
-                glUniform1i(glGetUniformLocation(buildingShader, "enableShadows"), enableShadows);
-                glUniform1i(glGetUniformLocation(buildingShader, "uUsePCF"), enablePCF);
-                glUniform1f(glGetUniformLocation(buildingShader, "bloomThreshold"), bloomThreshold);
+                glUniform1i(glGetUniformLocation(activeBuildingShader, "enableShadows"), enableShadows);
+                glUniform1i(glGetUniformLocation(activeBuildingShader, "uUsePCF"), enablePCF);
+                glUniform1f(glGetUniformLocation(activeBuildingShader, "bloomThreshold"), bloomThreshold);
                 
-                city.Render(view, projection, lightSpaceMatrix, camera.Position);
+                // Pass the active shader to City::Render so it doesn't override
+                city.Render(view, projection, lightSpaceMatrix, camera.Position, activeBuildingShader);
                 
                 // CRITICAL: Reset OpenGL state after city rendering
                 glUseProgram(0);
@@ -885,6 +1089,18 @@ int main()
             hudY -= 18.0f;
         }
         
+        // Phase 11: CSM info
+        hud.RenderText("CSM: " + std::string(enableCSM ? "ON" : "OFF") + " (F11)", 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        
+        if (enableCSM && csmShadowMap) {
+            char csmBuf[64];
+            snprintf(csmBuf, sizeof(csmBuf), "Cascades: %d Lambda: %.2f (</>) Vis: %s", 
+                     NUM_CASCADES, csmSplitLambda, visualizeCSMCascades ? "ON" : "OFF");
+            hud.RenderText(csmBuf, 10.0f, hudY, hudScale * 0.9f, hudColor);
+            hudY -= 18.0f;
+        }
+        
         // Camera position display
         char camBuf[64];
         snprintf(camBuf, sizeof(camBuf), "Cam: (%.1f, %.1f, %.1f)", camera.Position.x, camera.Position.y, camera.Position.z);
@@ -969,6 +1185,12 @@ int main()
         delete particleSystem;
     }
 
+    // Phase 11: Cleanup CSM
+    if (csmShadowMap) {
+        csmShadowMap->Cleanup();
+        delete csmShadowMap;
+    }
+
     city.Cleanup();
     hud.Cleanup();
     postProcessor.Cleanup();
@@ -990,6 +1212,8 @@ int main()
     glDeleteProgram(debugDepthShader);
     glDeleteProgram(buildingShader);
     glDeleteProgram(skyboxAtlasShader);
+    if (modelCSMShader) glDeleteProgram(modelCSMShader);
+    if (buildingCSMShader) glDeleteProgram(buildingCSMShader);
 
     glfwTerminate();
     std::cout << "\n[OK] Application closed successfully" << std::endl;
@@ -1486,6 +1710,64 @@ void processParticleControls(GLFWwindow* window)
     else if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_RELEASE)
     {
         zPressed = false;
+    }
+}
+
+// CSM controls (Phase 11 - Hard Feature)
+void processCSMControls(GLFWwindow* window)
+{
+    // F11: Toggle CSM
+    if (glfwGetKey(window, GLFW_KEY_F11) == GLFW_PRESS && !f11Pressed)
+    {
+        enableCSM = !enableCSM;
+        std::cout << "Cascaded Shadow Maps " << (enableCSM ? "ENABLED" : "DISABLED") << std::endl;
+        f11Pressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_F11) == GLFW_RELEASE)
+    {
+        f11Pressed = false;
+    }
+    
+    // F12: Toggle cascade visualization
+    if (glfwGetKey(window, GLFW_KEY_F12) == GLFW_PRESS && !f12Pressed)
+    {
+        visualizeCSMCascades = !visualizeCSMCascades;
+        std::cout << "CSM Cascade Visualization " << (visualizeCSMCascades ? "ENABLED" : "DISABLED") << std::endl;
+        f12Pressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_F12) == GLFW_RELEASE)
+    {
+        f12Pressed = false;
+    }
+
+    // < (comma): Decrease split lambda (more linear)
+    static bool commaPressed = false;
+    if (glfwGetKey(window, GLFW_KEY_COMMA) == GLFW_PRESS && !commaPressed)
+    {
+        csmSplitLambda -= 0.1f;
+        if (csmSplitLambda < 0.0f) csmSplitLambda = 0.0f;
+        if (csmShadowMap) csmShadowMap->SetSplitLambda(csmSplitLambda);
+        std::cout << "CSM Split Lambda: " << csmSplitLambda << " (more linear)" << std::endl;
+        commaPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_COMMA) == GLFW_RELEASE)
+    {
+        commaPressed = false;
+    }
+    
+    // > (period): Increase split lambda (more logarithmic)
+    static bool periodPressed = false;
+    if (glfwGetKey(window, GLFW_KEY_PERIOD) == GLFW_PRESS && !periodPressed)
+    {
+        csmSplitLambda += 0.1f;
+        if (csmSplitLambda > 1.0f) csmSplitLambda = 1.0f;
+        if (csmShadowMap) csmShadowMap->SetSplitLambda(csmSplitLambda);
+        std::cout << "CSM Split Lambda: " << csmSplitLambda << " (more logarithmic)" << std::endl;
+        periodPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_PERIOD) == GLFW_RELEASE)
+    {
+        periodPressed = false;
     }
 }
 
