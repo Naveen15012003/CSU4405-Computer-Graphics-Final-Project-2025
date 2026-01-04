@@ -53,6 +53,19 @@ void main()
         FragColor = vec4(color, 1.0);
         return;
     }
+    else if (debugMode == 4) {
+        // Show DoF blur only (pre-blurred scene)
+        vec3 color = hdrColor * exposure;
+        color = ACESFilm(color);
+        FragColor = vec4(color, 1.0);
+        return;
+    }
+    else if (debugMode == 5 || debugMode == 6) {
+        // DoF debug modes (depth or CoC visualization)
+        // These come pre-processed from the DoF shader, just pass through
+        FragColor = vec4(hdrColor, 1.0);
+        return;
+    }
     
     // Normal mode: Full HDR pipeline
     vec3 color = hdrColor;

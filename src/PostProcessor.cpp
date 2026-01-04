@@ -75,13 +75,16 @@ static unsigned int CompileShader(const char* vertexPath, const char* fragmentPa
 
 PostProcessor::PostProcessor(unsigned int width, unsigned int height)
     : width(width), height(height), initialized(false),
-      hdrFBO(0), hdrColorBuffer(0), hdrDepthBuffer(0),
+      hdrFBO(0), hdrColorBuffer(0), hdrDepthBuffer(0), hdrDepthTexture(0),
       brightFBO(0), brightColorBuffer(0),
       quadVAO(0), quadVBO(0),
-      postprocessShader(0), bloomExtractShader(0), blurShader(0)
+      postprocessShader(0), bloomExtractShader(0), blurShader(0),
+      dofShader(0), dofBlurShader(0)
 {
     bloomFBO[0] = bloomFBO[1] = 0;
     bloomColorBuffers[0] = bloomColorBuffers[1] = 0;
+    dofFBO[0] = dofFBO[1] = 0;
+    dofColorBuffers[0] = dofColorBuffers[1] = 0;
 }
 
 PostProcessor::~PostProcessor() {
@@ -134,11 +137,16 @@ void PostProcessor::CreateFramebuffers() {
     glDrawBuffers(2, drawBuffers);
     std::cout << "[HDR FBO] MRT enabled: COLOR_ATTACHMENT0 + COLOR_ATTACHMENT1" << std::endl;
 
-    // Depth renderbuffer
-    glGenRenderbuffers(1, &hdrDepthBuffer);
-    glBindRenderbuffer(GL_RENDERBUFFER, hdrDepthBuffer);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, hdrDepthBuffer);
+    // NEW: Depth texture (for DoF) instead of renderbuffer
+    glGenTextures(1, &hdrDepthTexture);
+    glBindTexture(GL_TEXTURE_2D, hdrDepthTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, hdrDepthTexture, 0);
+    std::cout << "[HDR FBO] Depth texture attached for DoF" << std::endl;
 
     if (!CheckFramebufferStatus(hdrFBO, "HDR")) return;
 
@@ -163,8 +171,26 @@ void PostProcessor::CreateFramebuffers() {
         if (!CheckFramebufferStatus(bloomFBO[i], i == 0 ? "Bloom Ping" : "Bloom Pong")) return;
     }
 
+    // NEW: DoF ping-pong framebuffers (full resolution for quality)
+    std::cout << "[DoF] Creating DoF framebuffers..." << std::endl;
+    for (int i = 0; i < 2; i++) {
+        glGenFramebuffers(1, &dofFBO[i]);
+        glBindFramebuffer(GL_FRAMEBUFFER, dofFBO[i]);
+
+        glGenTextures(1, &dofColorBuffers[i]);
+        glBindTexture(GL_TEXTURE_2D, dofColorBuffers[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dofColorBuffers[i], 0);
+
+        if (!CheckFramebufferStatus(dofFBO[i], i == 0 ? "DoF Ping" : "DoF Pong")) return;
+    }
+
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    std::cout << "[POST-PROCESSOR] Framebuffers created with MRT support" << std::endl;
+    std::cout << "[POST-PROCESSOR] All framebuffers created (MRT + DoF support)" << std::endl;
 }
 
 void PostProcessor::CreateScreenQuad() {
@@ -207,6 +233,21 @@ void PostProcessor::LoadShaders() {
     blurShader = CompileShader("shaders/postprocess.vert", "shaders/blur.frag");
     if (blurShader) {
         std::cout << "[OK] Blur shader loaded" << std::endl;
+    }
+
+    // NEW: Load DoF shaders
+    dofShader = CompileShader("shaders/postprocess.vert", "shaders/dof.frag");
+    if (dofShader) {
+        std::cout << "[OK] DoF composite shader loaded" << std::endl;
+    } else {
+        std::cerr << "[WARN] DoF shader failed to load - DoF will be disabled" << std::endl;
+    }
+
+    dofBlurShader = CompileShader("shaders/postprocess.vert", "shaders/dof_blur.frag");
+    if (dofBlurShader) {
+        std::cout << "[OK] DoF blur shader loaded" << std::endl;
+    } else {
+        std::cerr << "[WARN] DoF blur shader failed to load - DoF will be disabled" << std::endl;
     }
 }
 
@@ -258,14 +299,92 @@ void PostProcessor::ApplyBloom() {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+void PostProcessor::ApplyDoF(const DoFSettings& settings, int debugMode) {
+    if (!dofBlurShader || !dofShader) {
+        return;  // DoF shaders not available
+    }
+
+    // Step 1: Create blurred version of the scene using ping-pong blur
+    bool horizontal = true;
+    int blurIterations = 6;  // 3 horizontal + 3 vertical passes
+    float blurScale = settings.maxBlur * 2.0f;  // Scale blur based on max blur setting
+
+    glUseProgram(dofBlurShader);
+    for (int i = 0; i < blurIterations; i++) {
+        glBindFramebuffer(GL_FRAMEBUFFER, dofFBO[horizontal]);
+        glViewport(0, 0, width, height);
+        glUniform1i(glGetUniformLocation(dofBlurShader, "horizontal"), horizontal);
+        glUniform1f(glGetUniformLocation(dofBlurShader, "blurScale"), blurScale);
+
+        glActiveTexture(GL_TEXTURE0);
+        // First iteration uses hdrColorBuffer, subsequent iterations ping-pong
+        glBindTexture(GL_TEXTURE_2D, i == 0 ? hdrColorBuffer : dofColorBuffers[!horizontal]);
+        glUniform1i(glGetUniformLocation(dofBlurShader, "image"), 0);
+
+        RenderScreenQuad();
+        horizontal = !horizontal;
+    }
+
+    // Step 2: Composite sharp + blurred using depth-based CoC
+    // The result goes to dofColorBuffers[0] (we'll read from this in final pass)
+    glBindFramebuffer(GL_FRAMEBUFFER, dofFBO[0]);
+    glViewport(0, 0, width, height);
+    
+    glUseProgram(dofShader);
+
+    // Bind scene color (sharp)
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, hdrColorBuffer);
+    glUniform1i(glGetUniformLocation(dofShader, "sceneColor"), 0);
+
+    // Bind depth texture
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, hdrDepthTexture);
+    glUniform1i(glGetUniformLocation(dofShader, "sceneDepth"), 1);
+
+    // Bind blurred scene
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, dofColorBuffers[1]);  // Last ping-pong result
+    glUniform1i(glGetUniformLocation(dofShader, "blurredScene"), 2);
+
+    // Set DoF parameters
+    glUniform1f(glGetUniformLocation(dofShader, "focusDistance"), settings.focusDistance);
+    glUniform1f(glGetUniformLocation(dofShader, "focusRange"), settings.focusRange);
+    glUniform1f(glGetUniformLocation(dofShader, "maxBlur"), settings.maxBlur);
+    glUniform1f(glGetUniformLocation(dofShader, "aperture"), settings.aperture);
+    glUniform1i(glGetUniformLocation(dofShader, "enableDoF"), settings.enabled ? 1 : 0);
+    glUniform1i(glGetUniformLocation(dofShader, "debugMode"), debugMode);
+    glUniform1f(glGetUniformLocation(dofShader, "nearPlane"), settings.nearPlane);
+    glUniform1f(glGetUniformLocation(dofShader, "farPlane"), settings.farPlane);
+
+    RenderScreenQuad();
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 void PostProcessor::Render(float exposure, bool enableBloom, bool enableGamma) {
-    Render(exposure, enableBloom, enableGamma, 0.4f, 0); // Default bloom strength and normal mode
+    DoFSettings defaultDoF;
+    defaultDoF.enabled = false;
+    Render(exposure, enableBloom, enableGamma, 0.4f, 0, defaultDoF);
 }
 
 void PostProcessor::Render(float exposure, bool enableBloom, bool enableGamma, float bloomStrength, int debugMode) {
-    // Apply bloom if enabled (only in normal mode)
+    DoFSettings defaultDoF;
+    defaultDoF.enabled = false;
+    Render(exposure, enableBloom, enableGamma, bloomStrength, debugMode, defaultDoF);
+}
+
+void PostProcessor::Render(float exposure, bool enableBloom, bool enableGamma, float bloomStrength, 
+                           int debugMode, const DoFSettings& dofSettings) {
+    // Apply bloom if enabled (only in normal mode, not DoF debug modes)
     if (enableBloom && debugMode == 0) {
         ApplyBloom();
+    }
+
+    // Apply DoF if enabled (includes debug modes 5 and 6)
+    bool applyDoF = dofSettings.enabled || debugMode == 5 || debugMode == 6;
+    if (applyDoF && dofShader && dofBlurShader) {
+        ApplyDoF(dofSettings, debugMode);
     }
 
     // === FINAL POST-PROCESS TO SCREEN ===
@@ -287,6 +406,8 @@ void PostProcessor::Render(float exposure, bool enableBloom, bool enableGamma, f
         std::cout << "[POST-PROCESS] HDR texture ID: " << hdrColorBuffer << std::endl;
         std::cout << "[POST-PROCESS] Bright texture ID: " << brightColorBuffer << std::endl;
         std::cout << "[POST-PROCESS] Bloom texture ID: " << bloomColorBuffers[0] << std::endl;
+        std::cout << "[POST-PROCESS] Depth texture ID: " << hdrDepthTexture << std::endl;
+        std::cout << "[POST-PROCESS] DoF texture ID: " << dofColorBuffers[0] << std::endl;
         debugOnce = true;
     }
 
@@ -294,7 +415,13 @@ void PostProcessor::Render(float exposure, bool enableBloom, bool enableGamma, f
 
     // Bind the appropriate texture for each debug mode
     glActiveTexture(GL_TEXTURE0);
-    if (debugMode == 0 || debugMode == 1) {
+    if (debugMode == 5 || debugMode == 6) {
+        // DoF debug modes: use DoF output (which contains debug visualization)
+        glBindTexture(GL_TEXTURE_2D, dofColorBuffers[0]);
+    } else if (applyDoF && debugMode == 0) {
+        // Normal mode with DoF: use DoF composited result
+        glBindTexture(GL_TEXTURE_2D, dofColorBuffers[0]);
+    } else if (debugMode == 0 || debugMode == 1) {
         // Normal mode or HDR only: use HDR buffer
         glBindTexture(GL_TEXTURE_2D, hdrColorBuffer);
     } else if (debugMode == 2) {
@@ -303,6 +430,9 @@ void PostProcessor::Render(float exposure, bool enableBloom, bool enableGamma, f
     } else if (debugMode == 3) {
         // Bloom blur: use blurred bloom
         glBindTexture(GL_TEXTURE_2D, bloomColorBuffers[0]);
+    } else if (debugMode == 4) {
+        // DoF blur only (blurred scene without compositing)
+        glBindTexture(GL_TEXTURE_2D, dofColorBuffers[1]);
     }
     glUniform1i(glGetUniformLocation(postprocessShader, "hdrBuffer"), 0);
 
@@ -313,10 +443,13 @@ void PostProcessor::Render(float exposure, bool enableBloom, bool enableGamma, f
 
     // Set uniforms
     glUniform1f(glGetUniformLocation(postprocessShader, "exposure"), exposure);
-    glUniform1i(glGetUniformLocation(postprocessShader, "enableBloom"), (enableBloom && debugMode == 0) ? 1 : 0);
+    glUniform1i(glGetUniformLocation(postprocessShader, "enableBloom"), (enableBloom && debugMode == 0 && !applyDoF) ? 1 : 0);
     glUniform1i(glGetUniformLocation(postprocessShader, "enableGamma"), enableGamma ? 1 : 0);
     glUniform1f(glGetUniformLocation(postprocessShader, "bloomStrength"), bloomStrength);
-    glUniform1i(glGetUniformLocation(postprocessShader, "debugMode"), debugMode);
+    
+    // For DoF debug modes, we bypass tone mapping to show raw values
+    int effectiveDebugMode = (debugMode == 5 || debugMode == 6) ? debugMode : debugMode;
+    glUniform1i(glGetUniformLocation(postprocessShader, "debugMode"), effectiveDebugMode);
 
     // Render fullscreen quad
     RenderScreenQuad();
@@ -354,6 +487,7 @@ void PostProcessor::Cleanup() {
     if (hdrFBO) glDeleteFramebuffers(1, &hdrFBO);
     if (hdrColorBuffer) glDeleteTextures(1, &hdrColorBuffer);
     if (hdrDepthBuffer) glDeleteRenderbuffers(1, &hdrDepthBuffer);
+    if (hdrDepthTexture) glDeleteTextures(1, &hdrDepthTexture);
 
     if (brightFBO) glDeleteFramebuffers(1, &brightFBO);
     if (brightColorBuffer) glDeleteTextures(1, &brightColorBuffer);
@@ -361,6 +495,8 @@ void PostProcessor::Cleanup() {
     for (int i = 0; i < 2; i++) {
         if (bloomFBO[i]) glDeleteFramebuffers(1, &bloomFBO[i]);
         if (bloomColorBuffers[i]) glDeleteTextures(1, &bloomColorBuffers[i]);
+        if (dofFBO[i]) glDeleteFramebuffers(1, &dofFBO[i]);
+        if (dofColorBuffers[i]) glDeleteTextures(1, &dofColorBuffers[i]);
     }
 
     if (quadVAO) glDeleteVertexArrays(1, &quadVAO);
@@ -369,6 +505,8 @@ void PostProcessor::Cleanup() {
     if (postprocessShader) glDeleteProgram(postprocessShader);
     if (bloomExtractShader) glDeleteProgram(bloomExtractShader);
     if (blurShader) glDeleteProgram(blurShader);
+    if (dofShader) glDeleteProgram(dofShader);
+    if (dofBlurShader) glDeleteProgram(dofBlurShader);
 
     initialized = false;
 }

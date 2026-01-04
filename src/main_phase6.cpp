@@ -1,4 +1,4 @@
-﻿#include <glad/glad.h>
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -24,6 +24,9 @@
 // Phase 8 includes
 #include "EndlessSceneManager.h"
 #include "EndlessCityManager.h"
+
+// Phase 7 includes
+#include "SkinnedCharacter.h"
 
 // Window dimensions
 const unsigned int SCR_WIDTH = 1920;
@@ -60,6 +63,20 @@ float bloomThreshold = 1.0f;
 const float THRESHOLD_STEP = 0.1f;
 int debugViewMode = 0;
 
+// Phase 9: Depth of Field (Hard Feature)
+bool enableDoF = false;
+float dofFocusDistance = 10.0f;
+float dofFocusRange = 5.0f;
+float dofMaxBlur = 1.0f;
+float dofAperture = 1.0f;
+const float DOF_FOCUS_STEP = 1.0f;
+const float DOF_RANGE_STEP = 0.5f;
+const float DOF_BLUR_STEP = 0.1f;
+bool f9Pressed = false;
+bool nPressed = false;  // Focus distance decrease
+bool jPressed = false;  // Focus distance increase  
+bool hPressed = false;  // Focus range adjust
+
 // Phase 6 additions
 bool enableCity = true;
 bool useSkyboxAtlas = false;
@@ -70,6 +87,13 @@ bool kPressed = false;
 bool enableEndlessScene = false;  // DISABLED: Props hidden, only show 3 animated cubes
 bool enableEndlessCity = true;    // Re-enabled
 bool ePressed = false;
+
+// Phase 7 additions
+bool enableCharacter = true;
+bool yPressed = false;
+bool iPressed = false;
+bool lPressed = false;
+bool mPressed = false;  // Force emissive toggle
 
 // Key press tracking
 bool f1Pressed = false;
@@ -111,6 +135,9 @@ ShadowMap* shadowMap = nullptr;
 EndlessSceneManager* endlessScene = nullptr;
 EndlessCityManager* endlessCity = nullptr;  // NEW: Endless city manager
 
+// Phase 7: Skinned character
+SkinnedCharacter* character = nullptr;
+
  // Function prototypes
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
@@ -120,6 +147,8 @@ void processDebugKeys(GLFWwindow* window, SkyboxAtlas* skyboxAtlas);
 void toggleEndlessScene(GLFWwindow* window);
 void toggleEndlessCity(GLFWwindow* window);  // NEW: Toggle endless city
 void processLightControls(GLFWwindow* window);
+void processCharacterControls(GLFWwindow* window);  // NEW: Character controls
+void processDoFControls(GLFWwindow* window);  // NEW: DoF controls
 std::string loadShaderFromFile(const char* filePath);
 unsigned int compileShader(unsigned int type, const char* source);
 unsigned int createShaderProgram(const char* vertexPath, const char* fragmentPath);
@@ -198,6 +227,14 @@ int main()
     std::cout << "\n  PHASE 8 (ENDLESS SCENE):" << std::endl;
     std::cout << "  E    - Toggle Endless Scene ON/OFF" << std::endl;
     std::cout << "  U    - Toggle Endless City ON/OFF" << std::endl;
+    std::cout << "\n  PHASE 7 (CHARACTER ANIMATION):" << std::endl;
+    std::cout << "  Y    - Toggle Character ON/OFF" << std::endl;
+    std::cout << "  I    - Toggle Skeleton Debug" << std::endl;
+    std::cout << "  M    - Toggle Emissive Debug (cyan)" << std::endl;
+    std::cout << "\n  PHASE 9 (DEPTH OF FIELD - HARD):" << std::endl;
+    std::cout << "  F9   - Toggle DoF ON/OFF" << std::endl;
+    std::cout << "  N/J  - Focus Distance -/+" << std::endl;
+    std::cout << "  H    - Cycle DoF debug views" << std::endl;
     std::cout << "\n  SHADOWS:" << std::endl;
     std::cout << "  F1 - Toggle shadows" << std::endl;
     std::cout << "  F2 - Toggle PCF (soft shadows)" << std::endl;
@@ -338,6 +375,24 @@ int main()
     endlessCity->initialize(buildingShader, modelShader);  // Use building shader for buildings, model shader for ground
     std::cout << "[OK] Endless city initialized\n" << std::endl;
 
+    // Phase 7: Initialize Skinned Character
+    std::cout << "\n=== Phase 7: GPU Skinning + Animation ===" << std::endl;
+    character = new SkinnedCharacter();
+    if (character->init("assets/models/bot/bot.gltf", "")) {
+        // Position character at ground level (Y=0)
+        // The mesh offset in the shader will handle grounding the mesh based on AABB
+        character->setWorldTransform(glm::vec3(0.0f, -3.075f, 0.0f), 0.0f);
+        character->setScale(2.0f);  // Double the default scale (autoScale handles sizing to ~2 units, so this makes it ~4 units)
+        character->setVisible(true);
+        character->setForceEmissive(true);  // Cyan debug color for visibility
+        std::cout << "[OK] Character initialized successfully" << std::endl;
+    } else {
+        std::cerr << "[ERROR] Failed to initialize character, continuing without it" << std::endl;
+        delete character;
+        character = nullptr;
+    }
+    std::cout << "===================================\n" << std::endl;
+
     // Load skybox
     std::cout << "Loading skybox..." << std::endl;
     Skybox* skybox = nullptr;
@@ -418,12 +473,19 @@ int main()
             endlessCity->update(deltaTime, camera.Position);
         }
 
+        // Phase 7: Update character
+        if (character && enableCharacter && !animationPaused) {
+            character->update(deltaTime);
+        }
+
         // Input
         processInput(window, camera, deltaTime);
         processDebugKeys(window, skyboxAtlas);
         toggleEndlessScene(window);
         toggleEndlessCity(window);  // NEW: Toggle endless city
         processLightControls(window);
+        processCharacterControls(window);  // NEW: Character controls
+        processDoFControls(window);  // NEW: DoF controls
 
         // Update FPS
         updateFPS(window);
@@ -482,6 +544,12 @@ int main()
         if (enableCity)
         {
             city.RenderShadow(lightSpaceMatrix, shadowShader);
+        }
+
+        // Phase 7: Render character in shadow pass
+        if (character && enableCharacter)
+        {
+            character->renderDepth(lightSpaceMatrix);
         }
 
         shadowMap->Unbind();
@@ -629,12 +697,49 @@ int main()
             {
                 endlessCity->render(view, projection, lightSpaceMatrix, camera.Position);
             }
+
+            // Phase 7: Render character
+            if (character && enableCharacter)
+            {
+                DirectionalLight dirLight;
+                dirLight.direction = lightDirection;
+                dirLight.color = dirLightColor;
+                
+                PointLight ptLight;
+                ptLight.position = pointLightPos;
+                ptLight.color = pointLightColor;
+                ptLight.constant = 1.0f;
+                ptLight.linear = 0.09f;
+                ptLight.quadratic = 0.032f;
+                
+                ShadowData shadowData;
+                shadowData.lightSpaceMatrix = lightSpaceMatrix;
+                shadowData.shadowMapTexture = shadowMap->GetDepthTexture();
+                
+                RenderOptions renderOpts;
+                renderOpts.enableShadows = enableShadows;
+                renderOpts.enablePCF = enablePCF;
+                renderOpts.bloomThreshold = bloomThreshold;
+                
+                character->render(view, projection, dirLight, ptLight, shadowData, renderOpts);
+            }
         }
 
         // Phase 5: End post-processing render and apply effects
         if (usePostProcessing) {
             postProcessor.EndRender();
-            postProcessor.Render(exposure, enableBloom, enableGammaCorrection, bloomStrength, debugViewMode);
+            
+            // Create DoF settings
+            DoFSettings dofSettings;
+            dofSettings.enabled = enableDoF;
+            dofSettings.focusDistance = dofFocusDistance;
+            dofSettings.focusRange = dofFocusRange;
+            dofSettings.maxBlur = dofMaxBlur;
+            dofSettings.aperture = dofAperture;
+            dofSettings.nearPlane = 0.1f;
+            dofSettings.farPlane = 100.0f;
+            
+            postProcessor.Render(exposure, enableBloom, enableGammaCorrection, bloomStrength, debugViewMode, dofSettings);
         }
 
         // Phase 4: Render HUD overlay
@@ -667,8 +772,8 @@ int main()
         hud.RenderText(threshBuf, 10.0f, hudY, hudScale, hudColor);
         hudY -= 18.0f;
         
-        const char* debugModes[] = {"Normal", "HDR Only", "Bright", "Bloom"};
-        hud.RenderText(std::string("View: ") + debugModes[debugViewMode] + " (V)", 10.0f, hudY, hudScale, hudColor);
+        const char* debugModes[] = {"Normal", "HDR Only", "Bright", "Bloom", "DoF Blur", "Depth", "CoC"};
+        hud.RenderText(std::string("View: ") + debugModes[debugViewMode] + " (V/H)", 10.0f, hudY, hudScale, hudColor);
         hudY -= 18.0f;
         
         // Phase 6 graphics settings
@@ -692,6 +797,17 @@ int main()
         
         hud.RenderText("City: " + std::string(enableEndlessCity ? "ON" : "OFF") + " (U)", 10.0f, hudY, hudScale, hudColor);
         hudY -= 18.0f;
+        
+        // Phase 9: DoF info
+        hud.RenderText("DoF: " + std::string(enableDoF ? "ON" : "OFF") + " (F9)", 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        
+        if (enableDoF) {
+            char dofBuf[64];
+            snprintf(dofBuf, sizeof(dofBuf), "Focus: %.1f Range: %.1f (N/J)", dofFocusDistance, dofFocusRange);
+            hud.RenderText(dofBuf, 10.0f, hudY, hudScale * 0.9f, hudColor);
+            hudY -= 18.0f;
+        }
         
         // Camera position display
         char camBuf[64];
@@ -722,6 +838,25 @@ int main()
             hudY -= 18.0f;
         }
 
+        // Phase 7: Character info
+        if (character) {
+            hud.RenderText("Character: " + std::string(enableCharacter ? "ON" : "OFF") + " (Y)", 10.0f, hudY, hudScale, hudColor);
+            hudY -= 18.0f;
+            
+            if (enableCharacter) {
+                char charBuf[64];
+                snprintf(charBuf, sizeof(charBuf), "Anim: %s (%.1fs)", 
+                         character->getAnimationName().c_str(),
+                         character->getAnimationTime());
+                hud.RenderText(charBuf, 10.0f, hudY, hudScale * 0.9f, hudColor);
+                hudY -= 18.0f;
+                
+                snprintf(charBuf, sizeof(charBuf), "Joints: %d", character->getJointCount());
+                hud.RenderText(charBuf, 10.0f, hudY, hudScale * 0.9f, hudColor);
+                hudY -= 18.0f;
+            }
+        }
+
         glDisable(GL_BLEND);
         glEnable(GL_DEPTH_TEST);
 
@@ -745,6 +880,11 @@ int main()
     if (endlessCity) {
         endlessCity->cleanup();
         delete endlessCity;
+    }
+
+    // Phase 7: Cleanup character
+    if (character) {
+        delete character;
     }
 
     city.Cleanup();
@@ -1067,6 +1207,117 @@ void toggleEndlessCity(GLFWwindow* window)
     else if (glfwGetKey(window, GLFW_KEY_U) == GLFW_RELEASE)
     {
         uPressed = false;
+    }
+}
+
+// Character controls
+void processCharacterControls(GLFWwindow* window)
+{
+    if (!character) return;
+    
+    // Y: Toggle character visibility
+    if (glfwGetKey(window, GLFW_KEY_Y) == GLFW_PRESS && !yPressed)
+    {
+        enableCharacter = !enableCharacter;
+        std::cout << "Character " << (enableCharacter ? "ENABLED" : "DISABLED") << std::endl;
+        yPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_Y) == GLFW_RELEASE)
+    {
+        yPressed = false;
+    }
+    
+    // I: Toggle skeleton debug
+    if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS && !iPressed)
+    {
+        bool current = character->isVisible();  // Get current skeleton state indirectly
+        character->setDrawSkeleton(!current);
+        std::cout << "Character skeleton " << (!current ? "ENABLED" : "DISABLED") << std::endl;
+        iPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_I) == GLFW_RELEASE)
+    {
+        iPressed = false;
+    }
+    
+    // L: Toggle character animation pause (separate from cube animation)
+    // (Already handled by main P key, keeping this for completeness)
+    
+    // M: Toggle force emissive (visibility debug)
+    if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS && !mPressed)
+    {
+        static bool emissive = false;
+        emissive = !emissive;
+        character->setForceEmissive(emissive);
+        std::cout << "Character force emissive " << (emissive ? "ENABLED" : "DISABLED") << std::endl;
+        mPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_M) == GLFW_RELEASE)
+    {
+        mPressed = false;
+    }
+}
+
+// DoF controls (Phase 9 - Hard Feature)
+void processDoFControls(GLFWwindow* window)
+{
+    // F9: Toggle DoF
+    if (glfwGetKey(window, GLFW_KEY_F9) == GLFW_PRESS && !f9Pressed)
+    {
+        enableDoF = !enableDoF;
+        std::cout << "Depth of Field " << (enableDoF ? "ENABLED" : "DISABLED") << std::endl;
+        f9Pressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_F9) == GLFW_RELEASE)
+    {
+        f9Pressed = false;
+    }
+    
+    // N: Decrease focus distance
+    if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS && !nPressed)
+    {
+        dofFocusDistance -= DOF_FOCUS_STEP;
+        if (dofFocusDistance < 1.0f) dofFocusDistance = 1.0f;
+        std::cout << "DoF Focus Distance: " << dofFocusDistance << std::endl;
+        nPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_N) == GLFW_RELEASE)
+    {
+        nPressed = false;
+    }
+    
+    // J: Increase focus distance
+    if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS && !jPressed)
+    {
+        dofFocusDistance += DOF_FOCUS_STEP;
+        if (dofFocusDistance > 100.0f) dofFocusDistance = 100.0f;
+        std::cout << "DoF Focus Distance: " << dofFocusDistance << std::endl;
+        jPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_J) == GLFW_RELEASE)
+    {
+        jPressed = false;
+    }
+    
+    // H: Cycle debug view modes (includes DoF debug modes)
+    if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS && !hPressed)
+    {
+        // Cycle: 0 (normal) -> 5 (depth) -> 6 (CoC) -> 0
+        if (debugViewMode == 0) {
+            debugViewMode = 5;
+            std::cout << "Debug View: Depth Visualization" << std::endl;
+        } else if (debugViewMode == 5) {
+            debugViewMode = 6;
+            std::cout << "Debug View: Circle of Confusion" << std::endl;
+        } else {
+            debugViewMode = 0;
+            std::cout << "Debug View: Normal" << std::endl;
+        }
+        hPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_H) == GLFW_RELEASE)
+    {
+        hPressed = false;
     }
 }
 
