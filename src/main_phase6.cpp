@@ -28,6 +28,9 @@
 // Phase 7 includes
 #include "SkinnedCharacter.h"
 
+// Phase 10 includes
+#include "ParticleSystem.h"
+
 // Window dimensions
 const unsigned int SCR_WIDTH = 1920;
 const unsigned int SCR_HEIGHT = 1080;
@@ -76,6 +79,13 @@ bool f9Pressed = false;
 bool nPressed = false;  // Focus distance decrease
 bool jPressed = false;  // Focus distance increase  
 bool hPressed = false;  // Focus range adjust
+
+// Phase 10: Particle System (Medium Feature)
+bool enableParticles = true;
+int currentParticleType = 0;  // 0=fire, 1=smoke, 2=spark, 3=magic
+bool xPressed = false;   // Toggle particles
+bool zPressed = false;   // Change particle type
+bool f10Pressed = false; // Burst particles
 
 // Phase 6 additions
 bool enableCity = true;
@@ -138,6 +148,9 @@ EndlessCityManager* endlessCity = nullptr;  // NEW: Endless city manager
 // Phase 7: Skinned character
 SkinnedCharacter* character = nullptr;
 
+// Phase 10: Particle system
+ParticleSystem* particleSystem = nullptr;
+
  // Function prototypes
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
@@ -149,6 +162,7 @@ void toggleEndlessCity(GLFWwindow* window);  // NEW: Toggle endless city
 void processLightControls(GLFWwindow* window);
 void processCharacterControls(GLFWwindow* window);  // NEW: Character controls
 void processDoFControls(GLFWwindow* window);  // NEW: DoF controls
+void processParticleControls(GLFWwindow* window);  // NEW: Particle controls
 std::string loadShaderFromFile(const char* filePath);
 unsigned int compileShader(unsigned int type, const char* source);
 unsigned int createShaderProgram(const char* vertexPath, const char* fragmentPath);
@@ -235,6 +249,10 @@ int main()
     std::cout << "  F9   - Toggle DoF ON/OFF" << std::endl;
     std::cout << "  N/J  - Focus Distance -/+" << std::endl;
     std::cout << "  H    - Cycle DoF debug views" << std::endl;
+    std::cout << "\n  PHASE 10 (PARTICLE SYSTEM - MEDIUM):" << std::endl;
+    std::cout << "  X    - Toggle Particles ON/OFF" << std::endl;
+    std::cout << "  Z    - Cycle Particle Type (Fire/Smoke/Spark/Magic)" << std::endl;
+    std::cout << "  F10  - Burst Particles" << std::endl;
     std::cout << "\n  SHADOWS:" << std::endl;
     std::cout << "  F1 - Toggle shadows" << std::endl;
     std::cout << "  F2 - Toggle PCF (soft shadows)" << std::endl;
@@ -393,6 +411,37 @@ int main()
     }
     std::cout << "===================================\n" << std::endl;
 
+    // Phase 10: Initialize Particle System
+    std::cout << "\n=== Phase 10: GPU Particle System (Medium) ===" << std::endl;
+    particleSystem = new ParticleSystem(5000);
+    if (particleSystem->Initialize()) {
+        // Configure fire emitter
+        EmitterConfig fireConfig;
+        fireConfig.position = glm::vec3(5.0f, 0.5f, 0.0f);  // Position near right cube
+        fireConfig.direction = glm::vec3(0.0f, 1.0f, 0.0f);
+        fireConfig.spread = 0.3f;
+        fireConfig.minSpeed = 1.0f;
+        fireConfig.maxSpeed = 3.0f;
+        fireConfig.minLife = 0.5f;
+        fireConfig.maxLife = 2.0f;
+        fireConfig.minSize = 0.2f;
+        fireConfig.maxSize = 0.6f;
+        fireConfig.emitRate = 100.0f;
+        fireConfig.startColor = glm::vec4(1.0f, 0.8f, 0.3f, 1.0f);
+        fireConfig.endColor = glm::vec4(1.0f, 0.2f, 0.0f, 0.0f);
+        fireConfig.gravity = glm::vec3(0.0f, 0.5f, 0.0f);  // Fire rises
+        fireConfig.type = ParticleType::FIRE;
+        
+        particleSystem->SetEmitterConfig(fireConfig);
+        particleSystem->SetEmitting(true);
+        std::cout << "[OK] Particle system initialized with fire effect" << std::endl;
+    } else {
+        std::cerr << "[ERROR] Failed to initialize particle system" << std::endl;
+        delete particleSystem;
+        particleSystem = nullptr;
+    }
+    std::cout << "==========================================\n" << std::endl;
+
     // Load skybox
     std::cout << "Loading skybox..." << std::endl;
     Skybox* skybox = nullptr;
@@ -478,6 +527,11 @@ int main()
             character->update(deltaTime);
         }
 
+        // Phase 10: Update particle system
+        if (particleSystem && enableParticles && !animationPaused) {
+            particleSystem->Update(deltaTime);
+        }
+
         // Input
         processInput(window, camera, deltaTime);
         processDebugKeys(window, skyboxAtlas);
@@ -486,6 +540,7 @@ int main()
         processLightControls(window);
         processCharacterControls(window);  // NEW: Character controls
         processDoFControls(window);  // NEW: DoF controls
+        processParticleControls(window);  // NEW: Particle controls
 
         // Update FPS
         updateFPS(window);
@@ -723,6 +778,12 @@ int main()
                 
                 character->render(view, projection, dirLight, ptLight, shadowData, renderOpts);
             }
+
+            // Phase 10: Render particle system (after opaque objects, before post-processing)
+            if (particleSystem && enableParticles)
+            {
+                particleSystem->Render(view, projection, camera.Position);
+            }
         }
 
         // Phase 5: End post-processing render and apply effects
@@ -809,6 +870,21 @@ int main()
             hudY -= 18.0f;
         }
         
+        // Phase 10: Particle system info
+        const char* particleTypes[] = {"Fire", "Smoke", "Spark", "Magic"};
+        char particleBuf[64];
+        snprintf(particleBuf, sizeof(particleBuf), "Particles: %s %s (X)", 
+                 enableParticles ? "ON" : "OFF", particleTypes[currentParticleType]);
+        hud.RenderText(particleBuf, 10.0f, hudY, hudScale, hudColor);
+        hudY -= 18.0f;
+        
+        if (particleSystem && enableParticles) {
+            snprintf(particleBuf, sizeof(particleBuf), "Active: %d/%d (Z=type, F10=burst)", 
+                     particleSystem->GetActiveCount(), particleSystem->GetMaxParticles());
+            hud.RenderText(particleBuf, 10.0f, hudY, hudScale * 0.9f, hudColor);
+            hudY -= 18.0f;
+        }
+        
         // Camera position display
         char camBuf[64];
         snprintf(camBuf, sizeof(camBuf), "Cam: (%.1f, %.1f, %.1f)", camera.Position.x, camera.Position.y, camera.Position.z);
@@ -885,6 +961,12 @@ int main()
     // Phase 7: Cleanup character
     if (character) {
         delete character;
+    }
+
+    // Phase 10: Cleanup particle system
+    if (particleSystem) {
+        particleSystem->Cleanup();
+        delete particleSystem;
     }
 
     city.Cleanup();
@@ -1318,6 +1400,92 @@ void processDoFControls(GLFWwindow* window)
     else if (glfwGetKey(window, GLFW_KEY_H) == GLFW_RELEASE)
     {
         hPressed = false;
+    }
+}
+
+// Particle system controls (Phase 10 - Medium Feature)
+void processParticleControls(GLFWwindow* window)
+{
+    // F10: Burst particles
+    if (glfwGetKey(window, GLFW_KEY_F10) == GLFW_PRESS && !f10Pressed)
+    {
+        if (particleSystem) {
+            particleSystem->Burst(200);
+            std::cout << "Particle Burst Triggered! (200 particles)" << std::endl;
+        }
+        f10Pressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_F10) == GLFW_RELEASE)
+    {
+        f10Pressed = false;
+    }
+    
+    // X: Toggle particles
+    if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS && !xPressed)
+    {
+        enableParticles = !enableParticles;
+        if (particleSystem) {
+            particleSystem->SetEmitting(enableParticles);
+        }
+        std::cout << "Particles " << (enableParticles ? "ENABLED" : "DISABLED") << std::endl;
+        xPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_X) == GLFW_RELEASE)
+    {
+        xPressed = false;
+    }
+    
+    // Z: Change particle type
+    if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS && !zPressed)
+    {
+        currentParticleType = (currentParticleType + 1) % 4;
+        const char* particleTypes[] = {"Fire", "Smoke", "Spark", "Magic"};
+        std::cout << "Particle Type: " << particleTypes[currentParticleType] << std::endl;
+        
+        if (particleSystem) {
+            EmitterConfig config = particleSystem->GetEmitterConfig();
+            config.type = static_cast<ParticleType>(currentParticleType);
+            
+            // Adjust config based on type
+            switch (currentParticleType) {
+                case 0: // Fire
+                    config.gravity = glm::vec3(0.0f, 0.5f, 0.0f);
+                    config.startColor = glm::vec4(1.0f, 0.8f, 0.3f, 1.0f);
+                    config.endColor = glm::vec4(1.0f, 0.2f, 0.0f, 0.0f);
+                    config.minSize = 0.2f;
+                    config.maxSize = 0.6f;
+                    break;
+                case 1: // Smoke
+                    config.gravity = glm::vec3(0.0f, 0.8f, 0.0f);
+                    config.startColor = glm::vec4(0.5f, 0.5f, 0.5f, 0.8f);
+                    config.endColor = glm::vec4(0.3f, 0.3f, 0.3f, 0.0f);
+                    config.minSize = 0.3f;
+                    config.maxSize = 1.0f;
+                    break;
+                case 2: // Spark
+                    config.gravity = glm::vec3(0.0f, -5.0f, 0.0f);
+                    config.startColor = glm::vec4(1.0f, 0.9f, 0.5f, 1.0f);
+                    config.endColor = glm::vec4(1.0f, 0.5f, 0.1f, 0.0f);
+                    config.minSize = 0.05f;
+                    config.maxSize = 0.15f;
+                    config.minSpeed = 3.0f;
+                    config.maxSpeed = 8.0f;
+                    break;
+                case 3: // Magic
+                    config.gravity = glm::vec3(0.0f, 0.0f, 0.0f);
+                    config.startColor = glm::vec4(0.5f, 0.0f, 1.0f, 1.0f);
+                    config.endColor = glm::vec4(0.0f, 1.0f, 1.0f, 0.0f);
+                    config.minSize = 0.1f;
+                    config.maxSize = 0.4f;
+                    break;
+            }
+            particleSystem->SetEmitterConfig(config);
+        }
+        zPressed = true;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_RELEASE)
+    {
+        zPressed = false;
     }
 }
 
