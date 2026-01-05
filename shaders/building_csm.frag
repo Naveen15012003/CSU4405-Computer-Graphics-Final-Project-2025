@@ -42,11 +42,12 @@ uniform bool uUsePCF;
 // Bloom threshold
 uniform float bloomThreshold;
 
+// Blend region as percentage of cascade range
+const float CASCADE_BLEND_FACTOR = 0.15;
+
 // Get cascade index based on view space depth
-// ClipSpaceDepth is the positive view-space Z (distance from camera)
 int GetCascadeIndex()
 {
-    // Compare against cascade split depths (which are the far planes of each cascade)
     for (int i = 0; i < numCascades; i++) {
         if (ClipSpaceDepth < cascadeSplits[i]) {
             return i;
@@ -55,21 +56,13 @@ int GetCascadeIndex()
     return numCascades - 1;
 }
 
-// CSM Shadow calculation
-float CSMShadowCalculation(vec3 normal, vec3 lightDir)
+// Calculate shadow for a specific cascade
+float SampleCascadeShadow(int cascadeIndex, vec3 normal, vec3 lightDir)
 {
-    int cascadeIndex = GetCascadeIndex();
-    
-    // Transform fragment position to light space for the selected cascade
     vec4 fragPosLightSpace = lightSpaceMatrices[cascadeIndex] * vec4(FragPos, 1.0);
-    
-    // Perspective divide
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    
-    // Transform from [-1,1] to [0,1] range
     projCoords = projCoords * 0.5 + 0.5;
     
-    // Check if outside shadow map bounds
     if (projCoords.z > 1.0 || projCoords.z < 0.0 ||
         projCoords.x < 0.0 || projCoords.x > 1.0 || 
         projCoords.y < 0.0 || projCoords.y > 1.0) {
@@ -78,8 +71,7 @@ float CSMShadowCalculation(vec3 normal, vec3 lightDir)
     
     float currentDepth = projCoords.z;
     
-    // Calculate bias based on cascade index and surface angle
-    float baseBias = 0.0005;  // Reduced base bias
+    float baseBias = 0.0005;
     float cascadeScale = float(cascadeIndex + 1);
     float slopeBias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.001);
     float bias = baseBias * cascadeScale + slopeBias;
@@ -88,7 +80,6 @@ float CSMShadowCalculation(vec3 normal, vec3 lightDir)
     
     if (uUsePCF) {
         vec2 texelSize = 1.0 / vec2(textureSize(csmShadowMap, 0).xy);
-        
         for (int x = -1; x <= 1; ++x) {
             for (int y = -1; y <= 1; ++y) {
                 vec2 offset = vec2(float(x), float(y)) * texelSize;
@@ -100,6 +91,34 @@ float CSMShadowCalculation(vec3 normal, vec3 lightDir)
     } else {
         float closestDepth = texture(csmShadowMap, vec3(projCoords.xy, float(cascadeIndex))).r;
         shadow = (currentDepth - bias > closestDepth) ? 1.0 : 0.0;
+    }
+    
+    return shadow;
+}
+
+// CSM Shadow calculation with cascade blending
+float CSMShadowCalculation(vec3 normal, vec3 lightDir)
+{
+    int cascadeIndex = GetCascadeIndex();
+    float shadow = SampleCascadeShadow(cascadeIndex, normal, lightDir);
+    
+    // Blend with next cascade near boundaries
+    if (cascadeIndex < numCascades - 1)
+    {
+        float currentSplit = cascadeSplits[cascadeIndex];
+        float prevSplit = (cascadeIndex > 0) ? cascadeSplits[cascadeIndex - 1] : 0.0;
+        float cascadeRange = currentSplit - prevSplit;
+        float blendRegion = cascadeRange * CASCADE_BLEND_FACTOR;
+        
+        float distanceToEdge = currentSplit - ClipSpaceDepth;
+        
+        if (distanceToEdge < blendRegion && distanceToEdge > 0.0)
+        {
+            float nextShadow = SampleCascadeShadow(cascadeIndex + 1, normal, lightDir);
+            float blendFactor = (blendRegion - distanceToEdge) / blendRegion;
+            blendFactor = smoothstep(0.0, 1.0, blendFactor);
+            shadow = mix(shadow, nextShadow, blendFactor);
+        }
     }
     
     return shadow;

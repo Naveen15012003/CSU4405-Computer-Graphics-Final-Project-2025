@@ -56,6 +56,14 @@ struct EndlessCityRenderParams {
     // Bloom
     float bloomThreshold;
     
+    // CSM support
+    bool enableCSM;
+    bool visualizeCascades;
+    int numCascades;
+    unsigned int csmShadowMapArray;
+    glm::mat4 lightSpaceMatrices[4];  // Up to 4 cascades
+    float cascadeSplits[4];
+    
     // Default constructor with sensible defaults
     EndlessCityRenderParams() 
         : dirLightDir(glm::normalize(glm::vec3(-0.5f, -1.0f, -0.3f)))
@@ -69,7 +77,16 @@ struct EndlessCityRenderParams {
         , enableShadows(true)
         , enablePCF(true)
         , bloomThreshold(1.0f)
-    {}
+        , enableCSM(false)
+        , visualizeCascades(false)
+        , numCascades(0)
+        , csmShadowMapArray(0)
+    {
+        for (int i = 0; i < 4; i++) {
+            lightSpaceMatrices[i] = glm::mat4(1.0f);
+            cascadeSplits[i] = 0.0f;
+        }
+    }
 };
 
 // Chunk structure (2D grid cell)

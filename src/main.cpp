@@ -978,6 +978,16 @@ int main()
                 cityParams.enablePCF = enablePCF;
                 cityParams.bloomThreshold = bloomThreshold;
                 
+                // CSM parameters
+                cityParams.enableCSM = enableCSM && csmShadowMap != nullptr;
+                cityParams.visualizeCascades = visualizeCSMCascades;
+                cityParams.numCascades = NUM_CASCADES;
+                if (csmShadowMap) {
+                    cityParams.csmShadowMapArray = csmShadowMap->GetDepthTextureArray();
+                    csmShadowMap->GetLightSpaceMatrices(cityParams.lightSpaceMatrices);
+                    csmShadowMap->GetCascadeSplits(cityParams.cascadeSplits);
+                }
+                
                 endlessCity->render(view, projection, lightSpaceMatrix, camera.Position, cityParams);
             }
 

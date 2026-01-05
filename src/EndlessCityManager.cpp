@@ -706,7 +706,30 @@ void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projecti
     glUniform1i(glGetUniformLocation(m_buildingShader, "enableShadows"), renderParams.enableShadows ? 1 : 0);
     glUniform1i(glGetUniformLocation(m_buildingShader, "uUsePCF"), renderParams.enablePCF ? 1 : 0);
     
-    // Bind shadow map texture to unit 1
+    // CSM uniforms
+    glUniform1i(glGetUniformLocation(m_buildingShader, "enableCSM"), renderParams.enableCSM ? 1 : 0);
+    glUniform1i(glGetUniformLocation(m_buildingShader, "visualizeCascades"), renderParams.visualizeCascades ? 1 : 0);
+    glUniform1i(glGetUniformLocation(m_buildingShader, "numCascades"), renderParams.numCascades);
+    
+    if (renderParams.enableCSM && renderParams.numCascades > 0)
+    {
+        // Upload light space matrices for each cascade
+        for (int i = 0; i < renderParams.numCascades && i < 4; i++)
+        {
+            std::string uniformName = "lightSpaceMatrices[" + std::to_string(i) + "]";
+            glUniformMatrix4fv(glGetUniformLocation(m_buildingShader, uniformName.c_str()), 1, GL_FALSE, glm::value_ptr(renderParams.lightSpaceMatrices[i]));
+            
+            uniformName = "cascadeSplits[" + std::to_string(i) + "]";
+            glUniform1f(glGetUniformLocation(m_buildingShader, uniformName.c_str()), renderParams.cascadeSplits[i]);
+        }
+        
+        // Bind CSM shadow map array to texture unit 2
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, renderParams.csmShadowMapArray);
+        glUniform1i(glGetUniformLocation(m_buildingShader, "csmShadowMap"), 2);
+    }
+    
+    // Bind legacy shadow map texture to unit 1
     if (renderParams.shadowMapTexture != 0)
     {
         glActiveTexture(GL_TEXTURE1);
