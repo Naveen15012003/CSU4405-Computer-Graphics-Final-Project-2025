@@ -35,6 +35,43 @@ struct GroundTile {
     int tileType;              // 0=Road, 1=Sidewalk, 2=Park
 };
 
+// Render parameters for endless city (lighting, shadows, bloom)
+struct EndlessCityRenderParams {
+    // Directional light
+    glm::vec3 dirLightDir;
+    glm::vec3 dirLightColor;
+    
+    // Point light
+    glm::vec3 pointLightPos;
+    glm::vec3 pointLightColor;
+    float pointLightConstant;
+    float pointLightLinear;
+    float pointLightQuadratic;
+    
+    // Shadow
+    unsigned int shadowMapTexture;
+    bool enableShadows;
+    bool enablePCF;
+    
+    // Bloom
+    float bloomThreshold;
+    
+    // Default constructor with sensible defaults
+    EndlessCityRenderParams() 
+        : dirLightDir(glm::normalize(glm::vec3(-0.5f, -1.0f, -0.3f)))
+        , dirLightColor(1.0f, 1.0f, 0.95f)
+        , pointLightPos(2.0f, 3.0f, 2.0f)
+        , pointLightColor(1.0f, 0.9f, 0.7f)
+        , pointLightConstant(1.0f)
+        , pointLightLinear(0.09f)
+        , pointLightQuadratic(0.032f)
+        , shadowMapTexture(0)
+        , enableShadows(true)
+        , enablePCF(true)
+        , bloomThreshold(1.0f)
+    {}
+};
+
 // Chunk structure (2D grid cell)
 struct CityChunk {
     int chunkX;                              // Chunk X coordinate
@@ -67,7 +104,12 @@ public:
     // Update based on camera position (generates/removes chunks in all directions)
     void update(float deltaTime, const glm::vec3& cameraPosition);
     
-    // Render visible chunks
+    // Render visible chunks (NEW: with full lighting/shadow parameters)
+    void render(const glm::mat4& view, const glm::mat4& projection, 
+                const glm::mat4& lightSpaceMatrix, const glm::vec3& viewPos,
+                const EndlessCityRenderParams& renderParams);
+    
+    // Legacy render function (calls new one with default params) - for backward compatibility
     void render(const glm::mat4& view, const glm::mat4& projection, 
                 const glm::mat4& lightSpaceMatrix, const glm::vec3& viewPos);
     

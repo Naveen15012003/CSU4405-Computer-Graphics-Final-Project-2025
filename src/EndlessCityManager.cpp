@@ -645,8 +645,19 @@ void EndlessCityManager::renderGroundTile(const GroundTile& tile, const glm::mat
     glBindVertexArray(0);
 }
 
+// Legacy render function for backward compatibility
 void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projection, 
                                 const glm::mat4& lightSpaceMatrix, const glm::vec3& viewPos)
+{
+    // Call new render with default params
+    EndlessCityRenderParams defaultParams;
+    render(view, projection, lightSpaceMatrix, viewPos, defaultParams);
+}
+
+// NEW: Full render function with lighting/shadow/bloom support
+void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projection, 
+                                const glm::mat4& lightSpaceMatrix, const glm::vec3& viewPos,
+                                const EndlessCityRenderParams& renderParams)
 {
     if (!m_initialized) return;
     
@@ -671,12 +682,43 @@ void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projecti
         }
     }
     
-    // Render buildings (SKIP TYPE 3 - light brown commercial buildings)
+    // Render buildings with FULL lighting and shadow support
     glUseProgram(m_buildingShader);
+    
+    // Transform matrices
     glUniformMatrix4fv(glGetUniformLocation(m_buildingShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(glGetUniformLocation(m_buildingShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
     glUniformMatrix4fv(glGetUniformLocation(m_buildingShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
     glUniform3fv(glGetUniformLocation(m_buildingShader, "viewPos"), 1, glm::value_ptr(viewPos));
+    
+    // Directional light uniforms
+    glUniform3fv(glGetUniformLocation(m_buildingShader, "dirLightDir"), 1, glm::value_ptr(renderParams.dirLightDir));
+    glUniform3fv(glGetUniformLocation(m_buildingShader, "dirLightColor"), 1, glm::value_ptr(renderParams.dirLightColor));
+    
+    // Point light uniforms
+    glUniform3fv(glGetUniformLocation(m_buildingShader, "pointLightPos"), 1, glm::value_ptr(renderParams.pointLightPos));
+    glUniform3fv(glGetUniformLocation(m_buildingShader, "pointLightColor"), 1, glm::value_ptr(renderParams.pointLightColor));
+    glUniform1f(glGetUniformLocation(m_buildingShader, "pointLightConstant"), renderParams.pointLightConstant);
+    glUniform1f(glGetUniformLocation(m_buildingShader, "pointLightLinear"), renderParams.pointLightLinear);
+    glUniform1f(glGetUniformLocation(m_buildingShader, "pointLightQuadratic"), renderParams.pointLightQuadratic);
+    
+    // Shadow uniforms
+    glUniform1i(glGetUniformLocation(m_buildingShader, "enableShadows"), renderParams.enableShadows ? 1 : 0);
+    glUniform1i(glGetUniformLocation(m_buildingShader, "uUsePCF"), renderParams.enablePCF ? 1 : 0);
+    
+    // Bind shadow map texture to unit 1
+    if (renderParams.shadowMapTexture != 0)
+    {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, renderParams.shadowMapTexture);
+        glUniform1i(glGetUniformLocation(m_buildingShader, "shadowMap"), 1);
+    }
+    
+    // Bloom threshold
+    glUniform1f(glGetUniformLocation(m_buildingShader, "bloomThreshold"), renderParams.bloomThreshold);
+    
+    // Reset to texture unit 0 for building textures
+    glActiveTexture(GL_TEXTURE0);
     
     for (const auto& pair : m_activeChunks)
     {
@@ -701,7 +743,7 @@ void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projecti
     static int frameCounter = 0;
     if (frameCounter++ % 120 == 0)
     {
-        std::cout << "[EndlessCity] ???  Chunk (" << m_currentChunkX << "," << m_currentChunkZ << ") " 
+        std::cout << "[EndlessCity] ?  Chunk (" << m_currentChunkX << "," << m_currentChunkZ << ") " 
                   << "| Visible: " << visibleChunks << "/" << m_activeChunks.size()
                   << " | Buildings: " << totalBuildings << " (Type 3 skipped)"
                   << " | Ground: " << totalGroundTiles << std::endl;

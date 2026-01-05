@@ -954,7 +954,21 @@ int main()
             // Phase 8: Render endless city
             if (endlessCity && enableEndlessCity)
             {
-                endlessCity->render(view, projection, lightSpaceMatrix, camera.Position);
+                // Create render parameters with current lighting/shadow settings
+                EndlessCityRenderParams cityParams;
+                cityParams.dirLightDir = lightDirection;
+                cityParams.dirLightColor = dirLightColor;
+                cityParams.pointLightPos = pointLightPos;
+                cityParams.pointLightColor = pointLightColor;
+                cityParams.pointLightConstant = 1.0f;
+                cityParams.pointLightLinear = 0.09f;
+                cityParams.pointLightQuadratic = 0.032f;
+                cityParams.shadowMapTexture = shadowMap->GetDepthTexture();
+                cityParams.enableShadows = enableShadows;
+                cityParams.enablePCF = enablePCF;
+                cityParams.bloomThreshold = bloomThreshold;
+                
+                endlessCity->render(view, projection, lightSpaceMatrix, camera.Position, cityParams);
             }
 
             // Phase 7: Render character
