@@ -16,6 +16,7 @@ const int GRID_SIZE_PER_CHUNK = 8;             // Buildings per chunk in grid pa
 
 EndlessCityManager::EndlessCityManager()
     : m_buildingShader(0)
+    , m_buildingCSMShader(0)
     , m_groundShader(0)
     , m_currentChunkX(0)
     , m_currentChunkZ(0)
@@ -573,17 +574,19 @@ void EndlessCityManager::cullDistantChunks(int centerChunkX, int centerChunkZ)
     }
 }
 
+// Render a single building with the currently active shader
 void EndlessCityManager::renderBuilding(const CityBuilding& building, const glm::mat4& view, 
-                                       const glm::mat4& projection, const glm::mat4& lightSpaceMatrix)
+                                       const glm::mat4& projection, const glm::mat4& lightSpaceMatrix,
+                                       unsigned int activeShader)
 {
     glm::mat4 model = glm::mat4(1.0f);
     model = glm::translate(model, building.position);
     model = glm::rotate(model, building.rotation, glm::vec3(0.0f, 1.0f, 0.0f));
     model = glm::scale(model, building.scale);
     
-    glUniformMatrix4fv(glGetUniformLocation(m_buildingShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
-    glUniform3fv(glGetUniformLocation(m_buildingShader, "buildingScale"), 1, glm::value_ptr(building.scale));
-    glUniform1i(glGetUniformLocation(m_buildingShader, "buildingType"), building.buildingType);
+    glUniformMatrix4fv(glGetUniformLocation(activeShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
+    glUniform3fv(glGetUniformLocation(activeShader, "buildingScale"), 1, glm::value_ptr(building.scale));
+    glUniform1i(glGetUniformLocation(activeShader, "buildingType"), building.buildingType);
     
     // Bind building texture (CHANGED from color)
     glActiveTexture(GL_TEXTURE0);
@@ -609,7 +612,7 @@ void EndlessCityManager::renderBuilding(const CityBuilding& building, const glm:
             glBindTexture(GL_TEXTURE_2D, whiteTex);
         }
     }
-    glUniform1i(glGetUniformLocation(m_buildingShader, "buildingTexture"), 0);
+    glUniform1i(glGetUniformLocation(activeShader, "buildingTexture"), 0);
     
     glBindVertexArray(m_buildingVAO);
     glDrawArrays(GL_TRIANGLES, 0, 36);
@@ -682,34 +685,38 @@ void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projecti
         }
     }
     
+    // Choose shader based on CSM state
+    unsigned int activeShader = (renderParams.enableCSM && m_buildingCSMShader != 0) 
+                                ? m_buildingCSMShader : m_buildingShader;
+    
     // Render buildings with FULL lighting and shadow support
-    glUseProgram(m_buildingShader);
+    glUseProgram(activeShader);
     
     // Transform matrices
-    glUniformMatrix4fv(glGetUniformLocation(m_buildingShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(m_buildingShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-    glUniformMatrix4fv(glGetUniformLocation(m_buildingShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
-    glUniform3fv(glGetUniformLocation(m_buildingShader, "viewPos"), 1, glm::value_ptr(viewPos));
+    glUniformMatrix4fv(glGetUniformLocation(activeShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(glGetUniformLocation(activeShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+    glUniformMatrix4fv(glGetUniformLocation(activeShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
+    glUniform3fv(glGetUniformLocation(activeShader, "viewPos"), 1, glm::value_ptr(viewPos));
     
     // Directional light uniforms
-    glUniform3fv(glGetUniformLocation(m_buildingShader, "dirLightDir"), 1, glm::value_ptr(renderParams.dirLightDir));
-    glUniform3fv(glGetUniformLocation(m_buildingShader, "dirLightColor"), 1, glm::value_ptr(renderParams.dirLightColor));
+    glUniform3fv(glGetUniformLocation(activeShader, "dirLightDir"), 1, glm::value_ptr(renderParams.dirLightDir));
+    glUniform3fv(glGetUniformLocation(activeShader, "dirLightColor"), 1, glm::value_ptr(renderParams.dirLightColor));
     
     // Point light uniforms
-    glUniform3fv(glGetUniformLocation(m_buildingShader, "pointLightPos"), 1, glm::value_ptr(renderParams.pointLightPos));
-    glUniform3fv(glGetUniformLocation(m_buildingShader, "pointLightColor"), 1, glm::value_ptr(renderParams.pointLightColor));
-    glUniform1f(glGetUniformLocation(m_buildingShader, "pointLightConstant"), renderParams.pointLightConstant);
-    glUniform1f(glGetUniformLocation(m_buildingShader, "pointLightLinear"), renderParams.pointLightLinear);
-    glUniform1f(glGetUniformLocation(m_buildingShader, "pointLightQuadratic"), renderParams.pointLightQuadratic);
+    glUniform3fv(glGetUniformLocation(activeShader, "pointLightPos"), 1, glm::value_ptr(renderParams.pointLightPos));
+    glUniform3fv(glGetUniformLocation(activeShader, "pointLightColor"), 1, glm::value_ptr(renderParams.pointLightColor));
+    glUniform1f(glGetUniformLocation(activeShader, "pointLightConstant"), renderParams.pointLightConstant);
+    glUniform1f(glGetUniformLocation(activeShader, "pointLightLinear"), renderParams.pointLightLinear);
+    glUniform1f(glGetUniformLocation(activeShader, "pointLightQuadratic"), renderParams.pointLightQuadratic);
     
     // Shadow uniforms
-    glUniform1i(glGetUniformLocation(m_buildingShader, "enableShadows"), renderParams.enableShadows ? 1 : 0);
-    glUniform1i(glGetUniformLocation(m_buildingShader, "uUsePCF"), renderParams.enablePCF ? 1 : 0);
+    glUniform1i(glGetUniformLocation(activeShader, "enableShadows"), renderParams.enableShadows ? 1 : 0);
+    glUniform1i(glGetUniformLocation(activeShader, "uUsePCF"), renderParams.enablePCF ? 1 : 0);
     
     // CSM uniforms
-    glUniform1i(glGetUniformLocation(m_buildingShader, "enableCSM"), renderParams.enableCSM ? 1 : 0);
-    glUniform1i(glGetUniformLocation(m_buildingShader, "visualizeCascades"), renderParams.visualizeCascades ? 1 : 0);
-    glUniform1i(glGetUniformLocation(m_buildingShader, "numCascades"), renderParams.numCascades);
+    glUniform1i(glGetUniformLocation(activeShader, "enableCSM"), renderParams.enableCSM ? 1 : 0);
+    glUniform1i(glGetUniformLocation(activeShader, "visualizeCascades"), renderParams.visualizeCascades ? 1 : 0);
+    glUniform1i(glGetUniformLocation(activeShader, "numCascades"), renderParams.numCascades);
     
     if (renderParams.enableCSM && renderParams.numCascades > 0)
     {
@@ -717,16 +724,16 @@ void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projecti
         for (int i = 0; i < renderParams.numCascades && i < 4; i++)
         {
             std::string uniformName = "lightSpaceMatrices[" + std::to_string(i) + "]";
-            glUniformMatrix4fv(glGetUniformLocation(m_buildingShader, uniformName.c_str()), 1, GL_FALSE, glm::value_ptr(renderParams.lightSpaceMatrices[i]));
+            glUniformMatrix4fv(glGetUniformLocation(activeShader, uniformName.c_str()), 1, GL_FALSE, glm::value_ptr(renderParams.lightSpaceMatrices[i]));
             
             uniformName = "cascadeSplits[" + std::to_string(i) + "]";
-            glUniform1f(glGetUniformLocation(m_buildingShader, uniformName.c_str()), renderParams.cascadeSplits[i]);
+            glUniform1f(glGetUniformLocation(activeShader, uniformName.c_str()), renderParams.cascadeSplits[i]);
         }
         
         // Bind CSM shadow map array to texture unit 2
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D_ARRAY, renderParams.csmShadowMapArray);
-        glUniform1i(glGetUniformLocation(m_buildingShader, "csmShadowMap"), 2);
+        glUniform1i(glGetUniformLocation(activeShader, "csmShadowMap"), 2);
     }
     
     // Bind legacy shadow map texture to unit 1
@@ -734,11 +741,11 @@ void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projecti
     {
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, renderParams.shadowMapTexture);
-        glUniform1i(glGetUniformLocation(m_buildingShader, "shadowMap"), 1);
+        glUniform1i(glGetUniformLocation(activeShader, "shadowMap"), 1);
     }
     
     // Bloom threshold
-    glUniform1f(glGetUniformLocation(m_buildingShader, "bloomThreshold"), renderParams.bloomThreshold);
+    glUniform1f(glGetUniformLocation(activeShader, "bloomThreshold"), renderParams.bloomThreshold);
     
     // Reset to texture unit 0 for building textures
     glActiveTexture(GL_TEXTURE0);
@@ -757,7 +764,7 @@ void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projecti
                 continue;  // Don't render type 3 buildings
             }
             
-            renderBuilding(building, view, projection, lightSpaceMatrix);
+            renderBuilding(building, view, projection, lightSpaceMatrix, activeShader);
             totalBuildings++;
         }
     }

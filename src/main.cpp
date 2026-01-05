@@ -482,6 +482,10 @@ int main()
         buildingCSMShader = createShaderProgram("shaders/building_csm.vert", "shaders/building_csm.frag");
         if (buildingCSMShader != 0) {
             std::cout << "[OK] CSM building shader loaded" << std::endl;
+            // Set CSM shader for endless city
+            if (endlessCity) {
+                endlessCity->setCSMShader(buildingCSMShader);
+            }
         } else {
             std::cerr << "[WARN] Failed to load CSM building shader" << std::endl;
         }
@@ -1015,6 +1019,12 @@ int main()
                 renderOpts.bloomThreshold = bloomThreshold;
                 
                 character->render(view, projection, dirLight, ptLight, shadowData, renderOpts);
+            }
+
+            // Phase 10: Render particle system
+            if (particleSystem && enableParticles)
+            {
+                particleSystem->Render(view, projection, camera.Position);
             }
         }
 

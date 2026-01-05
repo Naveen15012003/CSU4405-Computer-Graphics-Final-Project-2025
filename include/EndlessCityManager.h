@@ -118,6 +118,9 @@ public:
     // Initialize the endless city system
     void initialize(unsigned int buildingShader, unsigned int groundShader);
     
+    // Set CSM shader for use when CSM is enabled
+    void setCSMShader(unsigned int csmShader) { m_buildingCSMShader = csmShader; }
+    
     // Update based on camera position (generates/removes chunks in all directions)
     void update(float deltaTime, const glm::vec3& cameraPosition);
     
@@ -163,9 +166,10 @@ private:
     // Convert world position to chunk coordinates
     std::pair<int, int> worldToChunk(const glm::vec3& worldPos) const;
     
-    // Render a single building
+    // Render a single building with active shader
     void renderBuilding(const CityBuilding& building, const glm::mat4& view, 
-                       const glm::mat4& projection, const glm::mat4& lightSpaceMatrix);
+                       const glm::mat4& projection, const glm::mat4& lightSpaceMatrix,
+                       unsigned int activeShader);
     
     // Render a single ground tile
     void renderGroundTile(const GroundTile& tile, const glm::mat4& view, 
@@ -191,6 +195,7 @@ private:
     
     std::vector<unsigned int> m_buildingTextures;  // NEW: Building facade textures
     unsigned int m_buildingShader;            // Building shader program
+    unsigned int m_buildingCSMShader;         // CSM building shader program
     unsigned int m_groundShader;              // Ground shader program
     
     int m_currentChunkX;                      // Current chunk X player is in
