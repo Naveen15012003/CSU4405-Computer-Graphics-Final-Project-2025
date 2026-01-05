@@ -604,7 +604,7 @@ int main()
         }
 
         // === PASS 1: SHADOW MAP (DEPTH PASS) ===
-        float near_plane = 0.1f, far_plane = 100.0f;
+        float near_plane = 0.1f, far_plane = 200.0f;  // INCREASED far plane for larger coverage
         
         // Define model matrices (shared between shadow and main passes)
         glm::mat4 groundModel = glm::mat4(1.0f);
@@ -624,26 +624,28 @@ int main()
         cube3Model = glm::rotate(cube3Model, cubeRotationAngle * -0.7f, glm::vec3(0.0f, 1.0f, 1.0f));
         cube3Model = glm::scale(cube3Model, glm::vec3(0.6f));
         
+        // IMPORTANT: Compute lightSpaceMatrix ONCE before shadow pass and reuse it
+        glm::mat4 lightSpaceMatrix;
+        
         // Update CSM cascades if enabled
         if (csmShadowMap && enableCSM) {
             glm::mat4 projection = camera.GetProjectionMatrix((float)SCR_WIDTH / (float)SCR_HEIGHT);
             glm::mat4 viewMat = camera.GetViewMatrix();
             csmShadowMap->UpdateCascades(viewMat, projection, lightDirection, near_plane, far_plane);
             
-            // CRITICAL: Enable depth test and set proper state for shadow rendering
+            // Use first cascade's light space matrix for legacy compatibility
+            lightSpaceMatrix = csmShadowMap->GetCascade(0).lightSpaceMatrix;
+            
+            // Render to each cascade
+            glUseProgram(shadowShader);
             glEnable(GL_DEPTH_TEST);
             glDepthFunc(GL_LESS);
             glDepthMask(GL_TRUE);
-            
-            // Render to each cascade
-            glCullFace(GL_FRONT);
-            glUseProgram(shadowShader);
+            glCullFace(GL_FRONT);  // Reduce shadow acne
             
             for (int i = 0; i < NUM_CASCADES; i++) {
+                // BindForWriting sets up framebuffer, viewport, and clears depth
                 csmShadowMap->BindForWriting(i);
-                
-                // Ensure depth is cleared and writable
-                glClear(GL_DEPTH_BUFFER_BIT);
                 
                 glm::mat4 cascadeLightSpaceMatrix = csmShadowMap->GetCascade(i).lightSpaceMatrix;
                 glUniformMatrix4fv(glGetUniformLocation(shadowShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(cascadeLightSpaceMatrix));
@@ -668,6 +670,11 @@ int main()
                     city.RenderShadow(cascadeLightSpaceMatrix, shadowShader);
                 }
                 
+                // Phase 8: Render endless city buildings in CSM shadow pass
+                if (endlessCity && enableEndlessCity) {
+                    endlessCity->renderShadow(cascadeLightSpaceMatrix, shadowShader);
+                }
+
                 // Phase 7: Render character in shadow pass
                 if (character && enableCharacter) {
                     character->renderDepth(cascadeLightSpaceMatrix);
@@ -676,14 +683,23 @@ int main()
             csmShadowMap->Unbind();
             glCullFace(GL_BACK);
         } else {
-            // Legacy single shadow map
-            glm::mat4 lightProjection = glm::ortho(-50.0f, 50.0f, -50.0f, 50.0f, near_plane, far_plane);
+            // Legacy single shadow map - FOLLOW CAMERA for endless city coverage
+            // Shadow map covers area around camera, not fixed at origin
+            const float shadowOrthoSize = 100.0f;  // Half-size of shadow ortho projection
+            const float shadowDistance = 80.0f;   // How far behind the camera the light "position" is
+            
+            // Center shadow map on camera XZ position (Y stays at 0 for consistent shadows)
+            glm::vec3 shadowCenter = glm::vec3(camera.Position.x, 0.0f, camera.Position.z);
+            
+            glm::mat4 lightProjection = glm::ortho(-shadowOrthoSize, shadowOrthoSize, 
+                                                    -shadowOrthoSize, shadowOrthoSize, 
+                                                    near_plane, far_plane);
             glm::mat4 lightView = glm::lookAt(
-                -lightDirection * 25.0f,
-                glm::vec3(0.0f, 0.0f, 0.0f),
+                shadowCenter - lightDirection * shadowDistance,  // Light position (offset from shadow center)
+                shadowCenter,  // Look at shadow center (follows camera)
                 glm::vec3(0.0f, 1.0f, 0.0f)
             );
-            glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+            lightSpaceMatrix = lightProjection * lightView;
 
             // Render scene to shadow map
             shadowMap->BindForWriting();
@@ -711,6 +727,11 @@ int main()
                 city.RenderShadow(lightSpaceMatrix, shadowShader);
             }
 
+            // Phase 8: Render endless city buildings in shadow pass
+            if (endlessCity && enableEndlessCity) {
+                endlessCity->renderShadow(lightSpaceMatrix, shadowShader);
+            }
+
             // Phase 7: Render character in shadow pass
             if (character && enableCharacter) {
                 character->renderDepth(lightSpaceMatrix);
@@ -721,7 +742,6 @@ int main()
         }
         
         // CRITICAL FIX: Always restore framebuffer and viewport AFTER shadow pass
-        // This ensures consistent state whether CSM is ON or OFF
         if (usePostProcessing) {
             postProcessor.BeginRender();  // Re-bind the HDR framebuffer
         } else {
@@ -735,16 +755,6 @@ int main()
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);
         
-        // Get light space matrix for legacy compatibility
-        glm::mat4 lightSpaceMatrix;
-        if (csmShadowMap && enableCSM) {
-            lightSpaceMatrix = csmShadowMap->GetCascade(0).lightSpaceMatrix;
-        } else {
-            glm::mat4 lightProjection = glm::ortho(-50.0f, 50.0f, -50.0f, 50.0f, near_plane, far_plane);
-            glm::mat4 lightView = glm::lookAt(-lightDirection * 25.0f, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-            lightSpaceMatrix = lightProjection * lightView;
-        }
-
         // === PASS 2: MAIN RENDER OR DEBUG VIEW ===
         // Note: Framebuffer and viewport already set above after shadow pass
 
@@ -995,12 +1005,6 @@ int main()
                 renderOpts.bloomThreshold = bloomThreshold;
                 
                 character->render(view, projection, dirLight, ptLight, shadowData, renderOpts);
-            }
-
-            // Phase 10: Render particle system (after opaque objects, before post-processing)
-            if (particleSystem && enableParticles)
-            {
-                particleSystem->Render(view, projection, camera.Position);
             }
         }
 

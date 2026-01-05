@@ -44,9 +44,10 @@ uniform float bloomThreshold;
 uniform mat4 view;
 
 // Get cascade index based on view space depth
+// ClipSpaceDepth is the positive view-space Z (distance from camera)
 int GetCascadeIndex()
 {
-    // ClipSpaceDepth is positive view-space depth
+    // Compare against cascade split depths (which are the far planes of each cascade)
     for (int i = 0; i < numCascades; i++) {
         if (ClipSpaceDepth < cascadeSplits[i]) {
             return i;
@@ -63,26 +64,27 @@ float CSMShadowCalculation(vec3 normal, vec3 lightDir)
     // Transform fragment position to light space for the selected cascade
     vec4 fragPosLightSpace = lightSpaceMatrices[cascadeIndex] * vec4(FragPos, 1.0);
     
-    // Perspective divide
+    // Perspective divide (for orthographic this is essentially a no-op, but keeping for correctness)
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     
-    // Transform to [0,1] range
+    // Transform from [-1,1] to [0,1] range for texture sampling
     projCoords = projCoords * 0.5 + 0.5;
     
-    // Check if outside shadow map bounds
-    if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || 
+    // Check if outside shadow map bounds - if so, not in shadow
+    if (projCoords.z > 1.0 || projCoords.z < 0.0 ||
+        projCoords.x < 0.0 || projCoords.x > 1.0 || 
         projCoords.y < 0.0 || projCoords.y > 1.0) {
         return 0.0;  // Not in shadow if outside bounds
     }
     
     float currentDepth = projCoords.z;
     
-    // Calculate bias based on cascade (larger cascades need larger bias)
-    // Also adjust based on surface angle to light
-    float baseBias = 0.002;
-    float cascadeBias = baseBias * float(cascadeIndex + 1);
-    float slopeBias = max(0.01 * (1.0 - dot(normal, lightDir)), 0.002);
-    float bias = cascadeBias + slopeBias;
+    // Calculate bias based on cascade index and surface angle
+    // Larger cascades cover more area, so they need larger bias to prevent acne
+    float baseBias = 0.0005;  // Reduced base bias
+    float cascadeScale = float(cascadeIndex + 1);
+    float slopeBias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.001);
+    float bias = baseBias * cascadeScale + slopeBias;
     
     float shadow = 0.0;
     
@@ -90,7 +92,7 @@ float CSMShadowCalculation(vec3 normal, vec3 lightDir)
         // PCF sampling with texture array
         vec2 texelSize = 1.0 / vec2(textureSize(csmShadowMap, 0).xy);
         
-        // 3x3 PCF kernel
+        // 3x3 PCF kernel for soft shadows
         for (int x = -1; x <= 1; ++x) {
             for (int y = -1; y <= 1; ++y) {
                 vec2 offset = vec2(float(x), float(y)) * texelSize;
@@ -100,7 +102,7 @@ float CSMShadowCalculation(vec3 normal, vec3 lightDir)
         }
         shadow /= 9.0;
     } else {
-        // Simple shadow sampling
+        // Simple shadow sampling without PCF
         float closestDepth = texture(csmShadowMap, vec3(projCoords.xy, float(cascadeIndex))).r;
         shadow = (currentDepth - bias > closestDepth) ? 1.0 : 0.0;
     }
@@ -176,12 +178,13 @@ void main()
         }
     }
     
+    // Clamp shadow to prevent total darkness
     shadow = clamp(shadow, 0.0, 0.85);
     
     // Final lighting
     vec3 lighting = ambient + (1.0 - shadow) * (diffuse + specular) * albedo;
     
-    // Point light
+    // Point light contribution
     float distance = length(pointLightPos - FragPos);
     float attenuation = 1.0 / (pointLightConstant + pointLightLinear * distance + 
                                pointLightQuadratic * (distance * distance));

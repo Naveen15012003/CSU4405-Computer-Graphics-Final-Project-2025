@@ -117,7 +117,8 @@ std::vector<glm::vec4> CascadedShadowMap::GetFrustumCornersWorldSpace(
 
 glm::mat4 CascadedShadowMap::CalculateLightSpaceMatrix(
     const std::vector<glm::vec4>& frustumCorners,
-    const glm::vec3& lightDirection) {
+    const glm::vec3& lightDirection,
+    int cascadeIndex) {
     
     // Calculate frustum center
     glm::vec3 center(0.0f);
@@ -133,20 +134,8 @@ glm::mat4 CascadedShadowMap::CalculateLightSpaceMatrix(
         up = glm::vec3(0.0f, 0.0f, 1.0f);
     }
     
-    // Calculate frustum bounding sphere radius for initial light distance
-    float radius = 0.0f;
-    for (const auto& corner : frustumCorners) {
-        float distance = glm::length(glm::vec3(corner) - center);
-        radius = std::max(radius, distance);
-    }
-    
-    // Position light far enough back to see the entire frustum
-    // lightDir points towards the light source (opposite of shadow direction)
-    float lightDistance = radius * 2.0f;
-    glm::vec3 lightPos = center - lightDir * lightDistance;
-    
-    // Create light view matrix (looking at frustum center from light position)
-    glm::mat4 lightView = glm::lookAt(lightPos, center, up);
+    // Create light view matrix looking at frustum center
+    glm::mat4 lightView = glm::lookAt(center - lightDir * 1.0f, center, up);
     
     // Transform frustum corners to light space and compute AABB
     float minX = std::numeric_limits<float>::max();
@@ -166,27 +155,40 @@ glm::mat4 CascadedShadowMap::CalculateLightSpaceMatrix(
         maxZ = std::max(maxZ, lightSpaceCorner.z);
     }
     
-    // CRITICAL FIX: Extend the Z range to capture shadow casters BEHIND the near plane
-    // Buildings and other tall objects may be outside the view frustum but cast shadows into it
-    float shadowCasterExtension = 200.0f;  // How far back to look for shadow casters
-    minZ -= shadowCasterExtension;
+    // Calculate the frustum size for shadow caster extension
+    float frustumWidth = maxX - minX;
+    float frustumHeight = maxY - minY;
     
-    // Also extend the far plane slightly
+    // Scale shadow caster extension based on cascade size
+    float baseExtension = 50.0f;
+    float cascadeScale = 1.0f + cascadeIndex * 0.5f;
+    float shadowCasterExtension = baseExtension * cascadeScale;
+    
+    // Extend Z range to capture shadow casters behind the frustum
+    minZ -= shadowCasterExtension;
     maxZ += 10.0f;
     
-    // Add padding to X and Y bounds
-    float xPadding = (maxX - minX) * 0.1f;
-    float yPadding = (maxY - minY) * 0.1f;
+    // Add small padding to X and Y
+    float xPadding = frustumWidth * 0.05f;
+    float yPadding = frustumHeight * 0.05f;
     minX -= xPadding;
     maxX += xPadding;
     minY -= yPadding;
     maxY += yPadding;
     
+    // For orthographic projection:
+    // In light view space, -Z is forward (towards scene)
+    // minZ is most negative (furthest into scene), maxZ is least negative (closest to light)
+    // glm::ortho expects positive near/far values representing distance along -Z
+    float zNear = -maxZ;
+    float zFar = -minZ;
+    
+    // Ensure valid projection (zNear < zFar and both positive)
+    if (zNear < 0.01f) zNear = 0.01f;
+    if (zFar <= zNear) zFar = zNear + shadowCasterExtension + 100.0f;
+    
     // Create orthographic projection
-    // OpenGL ortho expects: left, right, bottom, top, near, far
-    // In light view space, -Z is forward (towards the scene), so:
-    // near = -maxZ (closest to light), far = -minZ (furthest from light)
-    glm::mat4 lightProjection = glm::ortho(minX, maxX, minY, maxY, -maxZ, -minZ);
+    glm::mat4 lightProjection = glm::ortho(minX, maxX, minY, maxY, zNear, zFar);
     
     return lightProjection * lightView;
 }
@@ -215,8 +217,8 @@ void CascadedShadowMap::UpdateCascades(
         // Get frustum corners for this cascade
         std::vector<glm::vec4> frustumCorners = GetFrustumCornersWorldSpace(cascadeProjection, viewMatrix);
         
-        // Calculate light space matrix
-        cascades[i].lightSpaceMatrix = CalculateLightSpaceMatrix(frustumCorners, lightDirection);
+        // Calculate light space matrix (pass cascade index for scaling)
+        cascades[i].lightSpaceMatrix = CalculateLightSpaceMatrix(frustumCorners, lightDirection, i);
         cascades[i].splitDepth = cascadeFar;
     }
 }
@@ -229,7 +231,23 @@ void CascadedShadowMap::BindForWriting(int cascadeIndex) {
     
     glBindFramebuffer(GL_FRAMEBUFFER, FBO);
     glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depthTextureArray, 0, cascadeIndex);
+    
+    // CRITICAL: Ensure framebuffer is complete before proceeding
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        std::cerr << "[CSM] Framebuffer incomplete for cascade " << cascadeIndex << " (status: " << status << ")" << std::endl;
+        return;
+    }
+    
+    // Set viewport to shadow map resolution
     glViewport(0, 0, resolution, resolution);
+    
+    // CRITICAL: Ensure depth writing is enabled
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+    
+    // Clear depth buffer for this cascade layer
     glClear(GL_DEPTH_BUFFER_BIT);
 }
 
@@ -251,6 +269,17 @@ void CascadedShadowMap::GetLightSpaceMatrices(glm::mat4* matrices) const {
 void CascadedShadowMap::GetCascadeSplits(float* splits) const {
     for (int i = 0; i < NUM_CASCADES; i++) {
         splits[i] = cascades[i].splitDepth;
+    }
+}
+
+// Debug function to print CSM state
+void CascadedShadowMap::PrintDebugInfo() const {
+    std::cout << "[CSM] Debug Info:" << std::endl;
+    std::cout << "  Resolution: " << resolution << "x" << resolution << std::endl;
+    std::cout << "  Split Lambda: " << splitLambda << std::endl;
+    std::cout << "  Cascade Splits (far distances):" << std::endl;
+    for (int i = 0; i < NUM_CASCADES; i++) {
+        std::cout << "    Cascade " << i << ": " << cascades[i].splitDepth << std::endl;
     }
 }
 

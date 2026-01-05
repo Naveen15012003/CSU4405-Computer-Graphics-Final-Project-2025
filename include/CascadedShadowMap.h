@@ -76,6 +76,9 @@ public:
     // Get resolution
     unsigned int GetResolution() const { return resolution; }
     
+    // Debug info
+    void PrintDebugInfo() const;
+    
     // Cleanup
     void Cleanup();
     
@@ -92,7 +95,8 @@ private:
     // Internal helpers
     void CalculateSplitDepths(float nearPlane, float farPlane);
     glm::mat4 CalculateLightSpaceMatrix(const std::vector<glm::vec4>& frustumCorners,
-                                         const glm::vec3& lightDirection);
+                                         const glm::vec3& lightDirection,
+                                         int cascadeIndex);
     std::vector<glm::vec4> GetFrustumCornersWorldSpace(const glm::mat4& projection,
                                                         const glm::mat4& view);
 };

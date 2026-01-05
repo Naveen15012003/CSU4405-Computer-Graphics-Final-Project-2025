@@ -43,8 +43,10 @@ uniform bool uUsePCF;
 uniform float bloomThreshold;
 
 // Get cascade index based on view space depth
+// ClipSpaceDepth is the positive view-space Z (distance from camera)
 int GetCascadeIndex()
 {
+    // Compare against cascade split depths (which are the far planes of each cascade)
     for (int i = 0; i < numCascades; i++) {
         if (ClipSpaceDepth < cascadeSplits[i]) {
             return i;
@@ -64,22 +66,23 @@ float CSMShadowCalculation(vec3 normal, vec3 lightDir)
     // Perspective divide
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     
-    // Transform to [0,1] range
+    // Transform from [-1,1] to [0,1] range
     projCoords = projCoords * 0.5 + 0.5;
     
     // Check if outside shadow map bounds
-    if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || 
+    if (projCoords.z > 1.0 || projCoords.z < 0.0 ||
+        projCoords.x < 0.0 || projCoords.x > 1.0 || 
         projCoords.y < 0.0 || projCoords.y > 1.0) {
         return 0.0;
     }
     
     float currentDepth = projCoords.z;
     
-    // Calculate bias based on cascade
-    float baseBias = 0.002;
-    float cascadeBias = baseBias * float(cascadeIndex + 1);
-    float slopeBias = max(0.01 * (1.0 - dot(normal, lightDir)), 0.002);
-    float bias = cascadeBias + slopeBias;
+    // Calculate bias based on cascade index and surface angle
+    float baseBias = 0.0005;  // Reduced base bias
+    float cascadeScale = float(cascadeIndex + 1);
+    float slopeBias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.001);
+    float bias = baseBias * cascadeScale + slopeBias;
     
     float shadow = 0.0;
     

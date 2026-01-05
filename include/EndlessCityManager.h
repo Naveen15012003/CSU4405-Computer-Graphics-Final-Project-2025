@@ -113,6 +113,9 @@ public:
     void render(const glm::mat4& view, const glm::mat4& projection, 
                 const glm::mat4& lightSpaceMatrix, const glm::vec3& viewPos);
     
+    // NEW: Render for shadow pass (depth only)
+    void renderShadow(const glm::mat4& lightSpaceMatrix, unsigned int shadowShader);
+    
     // Cleanup
     void cleanup();
     

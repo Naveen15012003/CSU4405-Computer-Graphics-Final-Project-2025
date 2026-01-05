@@ -750,6 +750,39 @@ void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projecti
     }
 }
 
+// NEW: Render for shadow pass (depth only) - endless city buildings cast shadows
+void EndlessCityManager::renderShadow(const glm::mat4& lightSpaceMatrix, unsigned int shadowShader)
+{
+    if (!m_initialized) return;
+    
+    glUseProgram(shadowShader);
+    glUniformMatrix4fv(glGetUniformLocation(shadowShader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
+    
+    // Render all building geometry to shadow map
+    for (const auto& pair : m_activeChunks)
+    {
+        const CityChunk& chunk = pair.second;
+        if (!chunk.isVisible) continue;
+        
+        for (const auto& building : chunk.buildings)
+        {
+            // Skip building type 3
+            if (building.buildingType == 3) continue;
+            
+            glm::mat4 model = glm::mat4(1.0f);
+            model = glm::translate(model, building.position);
+            model = glm::rotate(model, building.rotation, glm::vec3(0.0f, 1.0f, 0.0f));
+            model = glm::scale(model, building.scale);
+            
+            glUniformMatrix4fv(glGetUniformLocation(shadowShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
+            
+            glBindVertexArray(m_buildingVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 36);
+            glBindVertexArray(0);
+        }
+    }
+}
+
 void EndlessCityManager::cleanup()
 {
     if (m_buildingVAO != 0)
