@@ -60,6 +60,11 @@ int GetCascadeIndex()
 // Calculate shadow for a specific cascade
 float SampleCascadeShadow(int cascadeIndex, vec3 normal, vec3 lightDir)
 {
+    // Safety check for cascade index
+    if (cascadeIndex < 0 || cascadeIndex >= numCascades) {
+        return 0.0;  // No shadow for invalid cascade
+    }
+    
     // Transform fragment position to light space for the selected cascade
     vec4 fragPosLightSpace = lightSpaceMatrices[cascadeIndex] * vec4(FragPos, 1.0);
     
@@ -69,33 +74,48 @@ float SampleCascadeShadow(int cascadeIndex, vec3 normal, vec3 lightDir)
     // Transform from [-1,1] to [0,1] range
     projCoords = projCoords * 0.5 + 0.5;
     
-    // Check if outside shadow map bounds
-    if (projCoords.z > 1.0 || projCoords.z < 0.0 ||
-        projCoords.x < 0.0 || projCoords.x > 1.0 || 
+    // CRITICAL: Check if fragment is outside the shadow map bounds
+    // Return NO SHADOW (0.0) if outside - prevents dark artifacts at edges
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 || 
         projCoords.y < 0.0 || projCoords.y > 1.0) {
-        return 0.0;
+        return 0.0;  // Outside shadow map X/Y bounds - no shadow
+    }
+    
+    // Check Z bounds - fragments behind or too far should not be shadowed
+    if (projCoords.z > 1.0 || projCoords.z < 0.0) {
+        return 0.0;  // Outside depth range - no shadow
     }
     
     float currentDepth = projCoords.z;
     
-    // Calculate bias
-    float baseBias = 0.0005;
-    float cascadeScale = float(cascadeIndex + 1);
-    float slopeBias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.001);
+    // Improved bias calculation
+    float baseBias = 0.0003;
+    float cascadeScale = 1.0 + float(cascadeIndex) * 0.5;
+    float slopeBias = max(0.003 * (1.0 - dot(normal, lightDir)), 0.0005);
     float bias = baseBias * cascadeScale + slopeBias;
     
     float shadow = 0.0;
     
     if (uUsePCF) {
         vec2 texelSize = 1.0 / vec2(textureSize(csmShadowMap, 0).xy);
+        int sampleCount = 0;
         for (int x = -1; x <= 1; ++x) {
             for (int y = -1; y <= 1; ++y) {
                 vec2 offset = vec2(float(x), float(y)) * texelSize;
-                float pcfDepth = texture(csmShadowMap, vec3(projCoords.xy + offset, float(cascadeIndex))).r;
-                shadow += (currentDepth - bias > pcfDepth) ? 1.0 : 0.0;
+                vec2 sampleCoord = projCoords.xy + offset;
+                
+                // Only sample if within bounds
+                if (sampleCoord.x >= 0.0 && sampleCoord.x <= 1.0 &&
+                    sampleCoord.y >= 0.0 && sampleCoord.y <= 1.0) {
+                    float pcfDepth = texture(csmShadowMap, vec3(sampleCoord, float(cascadeIndex))).r;
+                    shadow += (currentDepth - bias > pcfDepth) ? 1.0 : 0.0;
+                    sampleCount++;
+                }
             }
         }
-        shadow /= 9.0;
+        if (sampleCount > 0) {
+            shadow /= float(sampleCount);
+        }
     } else {
         float closestDepth = texture(csmShadowMap, vec3(projCoords.xy, float(cascadeIndex))).r;
         shadow = (currentDepth - bias > closestDepth) ? 1.0 : 0.0;
@@ -107,6 +127,11 @@ float SampleCascadeShadow(int cascadeIndex, vec3 normal, vec3 lightDir)
 // CSM Shadow calculation with cascade blending to eliminate seams
 float CSMShadowCalculation(vec3 normal, vec3 lightDir)
 {
+    // If fragment is beyond all cascades, no shadow
+    if (ClipSpaceDepth > cascadeSplits[numCascades - 1] * 1.1) {
+        return 0.0;  // Beyond shadow range - no shadow
+    }
+    
     int cascadeIndex = GetCascadeIndex();
     
     // Calculate shadow for current cascade
@@ -143,7 +168,10 @@ float LegacyShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     projCoords = projCoords * 0.5 + 0.5;
     
-    if (projCoords.z > 1.0)
+    // Return no shadow if outside bounds
+    if (projCoords.z > 1.0 || projCoords.z < 0.0 ||
+        projCoords.x < 0.0 || projCoords.x > 1.0 ||
+        projCoords.y < 0.0 || projCoords.y > 1.0)
         return 0.0;
     
     float currentDepth = projCoords.z;
@@ -181,8 +209,8 @@ void main()
     vec3 viewDir = normalize(viewPos - FragPos);
     vec3 lightDir = normalize(-dirLightDir);
     
-    // Ambient
-    vec3 ambient = 0.3 * dirLightColor * albedo;
+    // Ambient - slightly increased
+    vec3 ambient = 0.35 * dirLightColor * albedo;
     
     // Diffuse
     float diff = max(dot(norm, lightDir), 0.0);
@@ -204,7 +232,7 @@ void main()
     }
     
     // Clamp shadow to prevent total darkness
-    shadow = clamp(shadow, 0.0, 0.85);
+    shadow = clamp(shadow, 0.0, 0.75);
     
     // Final lighting
     vec3 lighting = ambient + (1.0 - shadow) * (diffuse + specular) * albedo;

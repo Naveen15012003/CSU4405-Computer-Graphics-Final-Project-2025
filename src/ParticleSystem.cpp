@@ -308,6 +308,15 @@ void ParticleSystem::Render(const glm::mat4& view, const glm::mat4& projection,
                             const glm::vec3& cameraPos) {
     if (!initialized || activeParticles == 0) return;
     
+    // Save current blend state to restore later
+    GLboolean blendWasEnabled;
+    GLint srcBlend, dstBlend;
+    GLboolean depthMaskWas;
+    glGetBooleanv(GL_BLEND, &blendWasEnabled);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &srcBlend);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &dstBlend);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMaskWas);
+    
     // Enable blending for transparency
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);  // Additive blending for fire/glow
@@ -331,14 +340,25 @@ void ParticleSystem::Render(const glm::mat4& view, const glm::mat4& projection,
     glUniform1i(glGetUniformLocation(shaderProgram, "particleType"), static_cast<int>(emitterConfig.type));
     glUniform1i(glGetUniformLocation(shaderProgram, "useTexture"), 0);  // Use procedural
     
+    // Pass bloom threshold for MRT output
+    glUniform1f(glGetUniformLocation(shaderProgram, "bloomThreshold"), 1.0f);
+    
     // Draw instanced
     glBindVertexArray(VAO);
     glDrawArraysInstanced(GL_TRIANGLES, 0, 6, activeParticles);
     glBindVertexArray(0);
     
     // Restore state
-    glDepthMask(GL_TRUE);
+    glDepthMask(depthMaskWas);
+    if (!blendWasEnabled) {
+        glDisable(GL_BLEND);
+    }
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
+    // Reset texture unit
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glUseProgram(0);
 }
 
 void ParticleSystem::Burst(int count) {

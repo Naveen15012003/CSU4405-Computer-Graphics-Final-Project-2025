@@ -588,8 +588,8 @@ void EndlessCityManager::renderBuilding(const CityBuilding& building, const glm:
     glUniform3fv(glGetUniformLocation(activeShader, "buildingScale"), 1, glm::value_ptr(building.scale));
     glUniform1i(glGetUniformLocation(activeShader, "buildingType"), building.buildingType);
     
-    // Bind building texture (CHANGED from color)
-    glActiveTexture(GL_TEXTURE0);
+    // Bind building texture to unit 0 ONLY - shadow map is already on unit 1
+    // IMPORTANT: The caller should have already set glActiveTexture(GL_TEXTURE0)
     if (building.textureID != 0)
     {
         glBindTexture(GL_TEXTURE_2D, building.textureID);
@@ -607,10 +607,7 @@ void EndlessCityManager::renderBuilding(const CityBuilding& building, const glm:
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         }
-        else
-        {
-            glBindTexture(GL_TEXTURE_2D, whiteTex);
-        }
+        glBindTexture(GL_TEXTURE_2D, whiteTex);
     }
     glUniform1i(glGetUniformLocation(activeShader, "buildingTexture"), 0);
     
@@ -668,28 +665,11 @@ void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projecti
     int totalBuildings = 0;
     int totalGroundTiles = 0;
     
-    // Render ground tiles first
-    glUseProgram(m_groundShader);
-    glUniformMatrix4fv(glGetUniformLocation(m_groundShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
-    glUniformMatrix4fv(glGetUniformLocation(m_groundShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-    
-    for (const auto& pair : m_activeChunks)
-    {
-        const CityChunk& chunk = pair.second;
-        if (!chunk.isVisible) continue;
-        
-        for (const auto& tile : chunk.groundTiles)
-        {
-            renderGroundTile(tile, view, projection);
-            totalGroundTiles++;
-        }
-    }
-    
-    // Choose shader based on CSM state
+    // Choose shader based on CSM state - use SAME shader for both ground and buildings
     unsigned int activeShader = (renderParams.enableCSM && m_buildingCSMShader != 0) 
                                 ? m_buildingCSMShader : m_buildingShader;
     
-    // Render buildings with FULL lighting and shadow support
+    // Setup shader ONCE for both ground tiles and buildings
     glUseProgram(activeShader);
     
     // Transform matrices
@@ -713,10 +693,10 @@ void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projecti
     glUniform1i(glGetUniformLocation(activeShader, "enableShadows"), renderParams.enableShadows ? 1 : 0);
     glUniform1i(glGetUniformLocation(activeShader, "uUsePCF"), renderParams.enablePCF ? 1 : 0);
     
-    // CSM uniforms
+    // CSM uniforms - CRITICAL: Must set enableCSM and numCascades properly
     glUniform1i(glGetUniformLocation(activeShader, "enableCSM"), renderParams.enableCSM ? 1 : 0);
     glUniform1i(glGetUniformLocation(activeShader, "visualizeCascades"), renderParams.visualizeCascades ? 1 : 0);
-    glUniform1i(glGetUniformLocation(activeShader, "numCascades"), renderParams.numCascades);
+    glUniform1i(glGetUniformLocation(activeShader, "numCascades"), renderParams.enableCSM ? renderParams.numCascades : 0);
     
     if (renderParams.enableCSM && renderParams.numCascades > 0)
     {
@@ -736,7 +716,7 @@ void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projecti
         glUniform1i(glGetUniformLocation(activeShader, "csmShadowMap"), 2);
     }
     
-    // Bind legacy shadow map texture to unit 1
+    // Bind legacy shadow map to texture unit 1
     if (renderParams.shadowMapTexture != 0)
     {
         glActiveTexture(GL_TEXTURE1);
@@ -747,9 +727,58 @@ void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projecti
     // Bloom threshold
     glUniform1f(glGetUniformLocation(activeShader, "bloomThreshold"), renderParams.bloomThreshold);
     
-    // Reset to texture unit 0 for building textures
+    // Switch to texture unit 0 for textures
     glActiveTexture(GL_TEXTURE0);
     
+    // ====== RENDER GROUND TILES FIRST (with CSM support) ======
+    for (const auto& pair : m_activeChunks)
+    {
+        const CityChunk& chunk = pair.second;
+        if (!chunk.isVisible) continue;
+        
+        for (const auto& tile : chunk.groundTiles)
+        {
+            glm::mat4 model = glm::mat4(1.0f);
+            model = glm::translate(model, tile.position);
+            model = glm::scale(model, tile.scale);
+            
+            glUniformMatrix4fv(glGetUniformLocation(activeShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
+            
+            // Set building scale for UV tiling (use ground tile scale)
+            glUniform3fv(glGetUniformLocation(activeShader, "buildingScale"), 1, glm::value_ptr(tile.scale));
+            glUniform1i(glGetUniformLocation(activeShader, "buildingType"), tile.tileType);
+            
+            // Bind ground texture if available, otherwise use a solid color texture
+            if (m_groundTexture != 0)
+            {
+                glBindTexture(GL_TEXTURE_2D, m_groundTexture);
+            }
+            else
+            {
+                // Create a simple colored texture for ground tiles
+                static unsigned int groundColorTex = 0;
+                if (groundColorTex == 0)
+                {
+                    unsigned char green[4] = {100, 150, 100, 255};
+                    glGenTextures(1, &groundColorTex);
+                    glBindTexture(GL_TEXTURE_2D, groundColorTex);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, green);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                }
+                glBindTexture(GL_TEXTURE_2D, groundColorTex);
+            }
+            glUniform1i(glGetUniformLocation(activeShader, "buildingTexture"), 0);
+            
+            glBindVertexArray(m_groundVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+            glBindVertexArray(0);
+            
+            totalGroundTiles++;
+        }
+    }
+    
+    // ====== RENDER BUILDINGS ======
     for (const auto& pair : m_activeChunks)
     {
         const CityChunk& chunk = pair.second;
@@ -764,19 +793,35 @@ void EndlessCityManager::render(const glm::mat4& view, const glm::mat4& projecti
                 continue;  // Don't render type 3 buildings
             }
             
+            // NOTE: Do NOT re-bind shadow map here - it stays on unit 1
+            // renderBuilding will only touch unit 0 for building textures
             renderBuilding(building, view, projection, lightSpaceMatrix, activeShader);
             totalBuildings++;
         }
     }
     
+    // CRITICAL: Reset OpenGL state after rendering
+    glUseProgram(0);
+    glBindVertexArray(0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    glActiveTexture(GL_TEXTURE0);  // Reset to default
+    
     // Debug output (reduced frequency)
     static int frameCounter = 0;
     if (frameCounter++ % 120 == 0)
     {
-        std::cout << "[EndlessCity] ?  Chunk (" << m_currentChunkX << "," << m_currentChunkZ << ") " 
+        std::cout << "[EndlessCity] Chunk (" << m_currentChunkX << "," << m_currentChunkZ << ") " 
                   << "| Visible: " << visibleChunks << "/" << m_activeChunks.size()
                   << " | Buildings: " << totalBuildings << " (Type 3 skipped)"
-                  << " | Ground: " << totalGroundTiles << std::endl;
+                  << " | Ground: " << totalGroundTiles 
+                  << " | Shadows: " << (renderParams.enableShadows ? "ON" : "OFF")
+                  << " | CSM: " << (renderParams.enableCSM ? "ON" : "OFF")
+                  << " | ShadowTex: " << renderParams.shadowMapTexture << std::endl;
     }
 }
 

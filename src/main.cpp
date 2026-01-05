@@ -39,8 +39,8 @@ const unsigned int SCR_WIDTH = 1920;
 const unsigned int SCR_HEIGHT = 1080;
 
 // Shadow map resolution
-const unsigned int SHADOW_WIDTH = 2048;
-const unsigned int SHADOW_HEIGHT = 2048;
+const unsigned int SHADOW_WIDTH = 4096;
+const unsigned int SHADOW_HEIGHT = 4096;
 
 // FPS counter variables
 double lastTime = 0.0;
@@ -608,7 +608,7 @@ int main()
         }
 
         // === PASS 1: SHADOW MAP (DEPTH PASS) ===
-        float near_plane = 0.1f, far_plane = 200.0f;  // INCREASED far plane for larger coverage
+        float near_plane = 0.1f, far_plane = 500.0f;  // INCREASED far plane for larger shadow coverage
         
         // Define model matrices (shared between shadow and main passes)
         glm::mat4 groundModel = glm::mat4(1.0f);
@@ -689,8 +689,8 @@ int main()
         } else {
             // Legacy single shadow map - FOLLOW CAMERA for endless city coverage
             // Shadow map covers area around camera, not fixed at origin
-            const float shadowOrthoSize = 100.0f;  // Half-size of shadow ortho projection
-            const float shadowDistance = 80.0f;   // How far behind the camera the light "position" is
+            const float shadowOrthoSize = 100.0f;  // Half-size of shadow ortho projection (balanced for quality vs coverage)
+            const float shadowDistance = 100.0f;   // How far behind the camera the light "position" is
             
             // Center shadow map on camera XZ position (Y stays at 0 for consistent shadows)
             glm::vec3 shadowCenter = glm::vec3(camera.Position.x, 0.0f, camera.Position.z);
@@ -953,6 +953,11 @@ int main()
                 glBindVertexArray(0);
                 glActiveTexture(GL_TEXTURE0);
                 glBindTexture(GL_TEXTURE_2D, 0);
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                glActiveTexture(GL_TEXTURE2);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+                glActiveTexture(GL_TEXTURE0);  // Reset to default texture unit
             }
 
             // Phase 8: Render endless scene
@@ -992,7 +997,29 @@ int main()
                     csmShadowMap->GetCascadeSplits(cityParams.cascadeSplits);
                 }
                 
+                // CRITICAL FIX: Bind shadow map BEFORE calling render, same as static City
+                // The static city render resets all texture units, so we need to re-bind here
+                shadowMap->BindForReading(GL_TEXTURE1);
+                
+                // CRITICAL FIX FOR CSM: Bind CSM shadow map array to texture unit 2
+                // This must be done AFTER the static city's state reset clears texture bindings
+                if (enableCSM && csmShadowMap) {
+                    glActiveTexture(GL_TEXTURE2);
+                    glBindTexture(GL_TEXTURE_2D_ARRAY, csmShadowMap->GetDepthTextureArray());
+                }
+                
                 endlessCity->render(view, projection, lightSpaceMatrix, camera.Position, cityParams);
+                
+                // Reset OpenGL state after endless city rendering
+                glUseProgram(0);
+                glBindVertexArray(0);
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                glActiveTexture(GL_TEXTURE2);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+                glActiveTexture(GL_TEXTURE0);  // Reset to default texture unit
             }
 
             // Phase 7: Render character
@@ -1019,12 +1046,25 @@ int main()
                 renderOpts.bloomThreshold = bloomThreshold;
                 
                 character->render(view, projection, dirLight, ptLight, shadowData, renderOpts);
+                
+                // Reset state after character rendering
+                glUseProgram(0);
+                glBindVertexArray(0);
             }
 
             // Phase 10: Render particle system
             if (particleSystem && enableParticles)
             {
+                // Ensure depth testing is properly set before particle rendering
+                glEnable(GL_DEPTH_TEST);
+                glDepthFunc(GL_LESS);
+                
                 particleSystem->Render(view, projection, camera.Position);
+                
+                // Restore default blend state after particles
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glDisable(GL_BLEND);
+                glDepthMask(GL_TRUE);
             }
         }
 

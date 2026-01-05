@@ -4,11 +4,14 @@ in vec2 TexCoords;
 in vec4 ParticleColor;
 in float LifeRatio;
 
-out vec4 FragColor;
+// MRT outputs for HDR + Bloom (matching other shaders)
+layout(location = 0) out vec4 FragColor;
+layout(location = 1) out vec4 BrightColor;
 
 uniform sampler2D particleTexture;
 uniform bool useTexture;
 uniform int particleType;  // 0 = fire, 1 = smoke, 2 = spark, 3 = magic
+uniform float bloomThreshold;  // Bloom threshold (default to 1.0 if not set)
 
 // Procedural circle/soft particle
 float softCircle(vec2 uv) {
@@ -100,4 +103,13 @@ void main()
     }
     
     FragColor = vec4(color, finalAlpha);
+    
+    // MRT: Output bright pixels to second attachment for bloom
+    float brightness = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    float threshold = bloomThreshold > 0.0 ? bloomThreshold : 1.0;
+    if (brightness > threshold) {
+        BrightColor = vec4(color, finalAlpha);
+    } else {
+        BrightColor = vec4(0.0, 0.0, 0.0, 0.0);
+    }
 }

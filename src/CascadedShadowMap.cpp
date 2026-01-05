@@ -159,18 +159,19 @@ glm::mat4 CascadedShadowMap::CalculateLightSpaceMatrix(
     float frustumWidth = maxX - minX;
     float frustumHeight = maxY - minY;
     
-    // Scale shadow caster extension based on cascade size
-    float baseExtension = 50.0f;
-    float cascadeScale = 1.0f + cascadeIndex * 0.5f;
+    // INCREASED: Scale shadow caster extension significantly for endless city coverage
+    // Base extension increased from 50 to 150, cascade scale increased
+    float baseExtension = 150.0f;
+    float cascadeScale = 1.0f + cascadeIndex * 1.0f;  // More aggressive scaling per cascade
     float shadowCasterExtension = baseExtension * cascadeScale;
     
     // Extend Z range to capture shadow casters behind the frustum
     minZ -= shadowCasterExtension;
-    maxZ += 10.0f;
+    maxZ += 20.0f;  // Small forward extension
     
-    // Add small padding to X and Y
-    float xPadding = frustumWidth * 0.05f;
-    float yPadding = frustumHeight * 0.05f;
+    // Add larger padding to X and Y for better coverage
+    float xPadding = frustumWidth * 0.1f;
+    float yPadding = frustumHeight * 0.1f;
     minX -= xPadding;
     maxX += xPadding;
     minY -= yPadding;
