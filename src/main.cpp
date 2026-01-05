@@ -95,7 +95,7 @@ bool enableCSM = false;  // Start disabled for testing
 bool visualizeCSMCascades = false;
 float csmSplitLambda = 0.5f;  // 0=linear, 1=logarithmic
 bool f11Pressed = false;  // Toggle CSM
-bool f12Pressed = false;  // Toggle cascade visualization
+bool f7Pressed = false;   // Toggle cascade visualization (changed from F12)
 
 // Phase 6 additions
 bool enableCity = true;
@@ -122,7 +122,6 @@ bool f3Pressed = false;
 bool f4Pressed = false;
 bool f5Pressed = false;
 bool f6Pressed = false;
-bool f7Pressed = false;
 bool f8Pressed = false;
 bool bPressed = false;
 bool oPressed = false;
@@ -271,7 +270,7 @@ int main()
     std::cout << "  F10  - Burst Particles" << std::endl;
     std::cout << "\n  PHASE 11 (CASCADED SHADOW MAPS - HARD):" << std::endl;
     std::cout << "  F11  - Toggle CSM ON/OFF" << std::endl;
-    std::cout << "  F12  - Toggle Cascade Visualization" << std::endl;
+    std::cout << "  F7   - Toggle Cascade Visualization" << std::endl;
     std::cout << "  </> - Adjust Split Lambda (linear/logarithmic)" << std::endl;
     std::cout << "\n  SHADOWS:" << std::endl;
     std::cout << "  F1 - Toggle shadows" << std::endl;
@@ -1173,7 +1172,7 @@ int main()
         
         if (enableCSM && csmShadowMap) {
             char csmBuf[64];
-            snprintf(csmBuf, sizeof(csmBuf), "Cascades: %d Lambda: %.2f (</>) Vis: %s", 
+            snprintf(csmBuf, sizeof(csmBuf), "Cascades: %d Lambda: %.2f (</>) Vis: %s (F7)", 
                      NUM_CASCADES, csmSplitLambda, visualizeCSMCascades ? "ON" : "OFF");
             hud.RenderText(csmBuf, 10.0f, hudY, hudScale * 0.9f, hudColor);
             hudY -= 18.0f;
@@ -1806,16 +1805,16 @@ void processCSMControls(GLFWwindow* window)
         f11Pressed = false;
     }
     
-    // F12: Toggle cascade visualization
-    if (glfwGetKey(window, GLFW_KEY_F12) == GLFW_PRESS && !f12Pressed)
+    // F7: Toggle cascade visualization (changed from F12 to avoid VS debug conflict)
+    if (glfwGetKey(window, GLFW_KEY_F7) == GLFW_PRESS && !f7Pressed)
     {
         visualizeCSMCascades = !visualizeCSMCascades;
         std::cout << "CSM Cascade Visualization " << (visualizeCSMCascades ? "ENABLED" : "DISABLED") << std::endl;
-        f12Pressed = true;
+        f7Pressed = true;
     }
-    else if (glfwGetKey(window, GLFW_KEY_F12) == GLFW_RELEASE)
+    else if (glfwGetKey(window, GLFW_KEY_F7) == GLFW_RELEASE)
     {
-        f12Pressed = false;
+        f7Pressed = false;
     }
 
     // < (comma): Decrease split lambda (more linear)

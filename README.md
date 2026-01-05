@@ -124,7 +124,7 @@ Or run directly from Visual Studio with `F5`.
 | Key | Action |
 |-----|--------|
 | `F11` | Toggle CSM ON/OFF |
-| `F12` | Toggle cascade visualization (R/G/B/Y colors) |
+| `F7` | Toggle cascade visualization (R/G/B/Y colors) |
 | `,` | Decrease split lambda (more linear) |
 | `.` | Increase split lambda (more logarithmic) |
 
